@@ -112,6 +112,12 @@ void Database::LoadBuiltData(
   auto ch = objectsByTypeName.find("Entity.character");
   character = ch == objectsByTypeName.end() ? nullptr
                                             : dynamic_cast<Entity*>(ch->second);
+  auto sci = objectsByTypeName.find("Item.science");
+  science = sci == objectsByTypeName.end() ? nullptr
+                                           : dynamic_cast<Item*>(sci->second);
+  auto ve = objectsByTypeName.find("Power.void-energy");
+  voidEnergy = ve == objectsByTypeName.end() ? nullptr
+                                             : dynamic_cast<Goods*>(ve->second);
 }
 
 }  // namespace yafc

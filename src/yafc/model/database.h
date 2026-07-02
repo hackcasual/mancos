@@ -66,6 +66,7 @@ class FactorioIdRange {
     TValue& operator[](const T* key) { return values_[key->id - offset_]; }
     const TValue& operator[](const T* key) const { return values_[key->id - offset_]; }
     TValue& ById(FactorioId id) { return values_[id - offset_]; }
+    const TValue& ById(FactorioId id) const { return values_[id - offset_]; }
     size_t size() const { return values_.size(); }
     void Clear() { std::fill(values_.begin(), values_.end(), TValue{}); }
     std::vector<TValue>& values() { return values_; }
@@ -145,6 +146,11 @@ class Database {
   std::vector<EntityContainer*> allContainers;
   Quality* qualityNormal = nullptr;  // upstream Quality.Normal
   Entity* character = nullptr;
+  // Objects that are inherently accessible (character, starting location,
+  // void energy, ...); seeds the milestone accessibility walk. Loader-filled.
+  std::vector<FactorioObject*> rootAccessible;
+  Item* science = nullptr;      // upstream Database.science ("Item.science")
+  Goods* voidEnergy = nullptr;  // upstream Database.voidEnergy ("Power.void-energy")
   int constantCombinatorCapacity = 18;
 
  private:

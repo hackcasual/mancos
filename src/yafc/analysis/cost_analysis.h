@@ -20,7 +20,11 @@
 
 namespace yafc {
 
-// Seam for the not-yet-ported Milestones/Automation analyses.
+class Milestones;
+class AutomationAnalysis;
+
+// Seam for accessibility; defaults to all-accessible, or built from the
+// Milestones + Automation analyses via HooksFromAnalyses.
 struct AccessibilityHooks {
   std::function<bool(const FactorioObject*)> isAccessible;
   std::function<bool(const FactorioObject*)> isAutomatable;
@@ -40,6 +44,9 @@ struct AccessibilityHooks {
     return !isAccessibleAtNextMilestone || isAccessibleAtNextMilestone(o);
   }
 };
+
+AccessibilityHooks HooksFromAnalyses(const Milestones& milestones,
+                                     const AutomationAnalysis& automation);
 
 struct CostAnalysisInput {
   float pollutionCostModifier = 1.0f;  // project.settings.PollutionCostModifier

@@ -326,6 +326,7 @@ class Technology : public RecipeOrTechnology {
   std::map<Recipe*, float> changeRecipeProductivity;
   bool unlocksFluidMining = false;
   FactorioObject* triggerObject = nullptr;
+  std::vector<Entity*> triggerEntities;
 
   std::string_view type() const override { return "Technology"; }
   FactorioObjectSortOrder sortingOrder() const override {
@@ -357,7 +358,11 @@ class Entity : public FactorioObject {
   bool mapGenerated = false;
   float mapGenDensity = 0;
   float basePower = 0;
+  // Upstream: energy is a nullable reference; entities without an energy
+  // source (ore patches, etc.) have hasEnergy == false and require no fuel.
+  bool hasEnergy = false;
   EntityEnergy energy;
+  std::vector<Entity*> sourceEntities;  // asteroid death sources
   std::vector<Item*> itemsToPlace;
   std::vector<Location*> spawnLocations;
   float heatingPower = 0;

@@ -120,8 +120,15 @@ Recipe + status: `solver-wasm/README.md`.
    fluid/heat temperature-chain constraints), flows from constraint duals, recipe waste %,
    entity placement costs, important-items ranking; accessibility via AccessibilityHooks
    seam until Milestones/Automation are ported; TechnologyScienceAnalysis targetTechnology
-   mode TODO. Remaining: hierarchical Setup/flatten, CalculateFlow rollup,
-   CheckBuiltCountExceeded, Milestones/Automation analyses.
+   mode TODO. [x] Dependency graph + Milestones + AutomationAnalysis ported 2026-07-02
+   (`bits.h`, `dependency_node.*`, `dependencies.*`, `milestones.*`,
+   `automation_analysis.*`): require-all/any dependency trees with per-class
+   GetDependencies dispatch (capture-ammo spawner sources TODO), reverse index, milestone
+   flood-fill with per-milestone pruning walks + inaccessible-mask prediction + locked
+   mask, automation queue propagation (character-only-crafter and late-machine cases),
+   HooksFromAnalyses wiring into CostAnalysis. Per-milestone walks sequential until wasm
+   pthreads land. Remaining: hierarchical Setup/flatten, CalculateFlow rollup,
+   CheckBuiltCountExceeded, TechnologyScienceAnalysis.
 3. Serialization (sized 2026-07-02: upstream = 2,009 loc infra + ~20 serialized classes;
    C++ ≈ 1.5-2.5k loc + ~1 line per property in per-class field lists; ~3-5 focused days on
    top of the model classes; risk is compat quirks — obsolete-prop migration, unknown-prop

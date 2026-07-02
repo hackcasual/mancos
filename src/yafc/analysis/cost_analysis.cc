@@ -6,9 +6,29 @@
 #include <map>
 #include <unordered_map>
 
+#include "yafc/analysis/automation_analysis.h"
+#include "yafc/analysis/milestones.h"
 #include "yafc/solver/lp.h"
 
 namespace yafc {
+
+AccessibilityHooks HooksFromAnalyses(const Milestones& milestones,
+                                     const AutomationAnalysis& automation) {
+  AccessibilityHooks hooks;
+  hooks.isAccessible = [&milestones](const FactorioObject* o) {
+    return milestones.IsAccessible(o);
+  };
+  hooks.isAutomatable = [&automation](const FactorioObject* o) {
+    return automation.IsAutomatable(o);
+  };
+  hooks.isAutomatableWithCurrentMilestones = [&automation](const FactorioObject* o) {
+    return automation.IsAutomatableNow(o);
+  };
+  hooks.isAccessibleAtNextMilestone = [&milestones](const FactorioObject* o) {
+    return milestones.IsAccessibleAtNextMilestone(o);
+  };
+  return hooks;
+}
 
 namespace {
 // Upstream tuning constants (CostAnalysis.cs).

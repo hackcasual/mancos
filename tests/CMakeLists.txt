@@ -11,6 +11,7 @@ add_executable(yafc_tests
   test_main.cc
   cost_analysis_test.cc
   database_test.cc
+  milestones_test.cc
   graph_test.cc
   production_table_solver_test.cc
   solver_test.cc
