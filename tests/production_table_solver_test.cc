@@ -182,3 +182,75 @@ TEST_CASE("one-sided links are disabled, not fatal") {
   CHECK((links[0].flags & LinkFlags::kLinkNotMatched) != 0);
   CHECK((links[0].flags & LinkFlags::kHasProduction) == 0);
 }
+
+TEST_CASE("sodium hydroxide: net-zero slaked lime loop solves clean when recycled") {
+  // Causticization: soda ash + slaked lime -> sodium hydroxide + calcium
+  // carbonate; the calcium loops back via calcination + slaking. With the
+  // recycle in place the calcium species circulate at net zero, so the strict
+  // Match links are feasible in pass 1 despite the loop (no slack, no
+  // warnings) - the LP determines the circulating flow from the NaOH demand.
+  enum : int { kSodaAsh, kSlakedLime, kNaOH, kCaCO3, kQuicklime, kLinks };
+  std::vector<SolverLink> links(kLinks);
+  links[kSodaAsh] = {.name = "soda-ash"};
+  links[kSlakedLime] = {.name = "slaked-lime"};
+  links[kNaOH] = {.name = "sodium-hydroxide", .amount = 60};
+  links[kCaCO3] = {.name = "calcium-carbonate"};
+  links[kQuicklime] = {.name = "quicklime"};
+
+  std::vector<SolverRecipe> recipes(4);
+  recipes[0] = {.name = "causticize",
+                .products = {{kNaOH, 1}, {kCaCO3, 1}},
+                .ingredients = {{kSodaAsh, 1}, {kSlakedLime, 1}}};
+  recipes[1] = {.name = "calcine", .products = {{kQuicklime, 1}},
+                .ingredients = {{kCaCO3, 1}}};  // CO2 vented (unlinked)
+  recipes[2] = {.name = "slake", .products = {{kSlakedLime, 1}},
+                .ingredients = {{kQuicklime, 1}}};  // water unlinked
+  recipes[3] = {.name = "make-soda-ash", .products = {{kSodaAsh, 1}}};
+
+  REQUIRE(SolveProductionTable(recipes, links) == TableSolveResult::Ok);
+
+  // The whole loop turns at exactly the NaOH rate.
+  for (int i = 0; i < 4; ++i) {
+    CHECK(recipes[i].recipes_per_second == doctest::Approx(60));
+    CHECK(recipes[i].warning_flags == 0);
+  }
+  // Every calcium link is perfectly balanced: no slack, no unmatched flags.
+  for (int link : {kSlakedLime, kCaCO3, kQuicklime}) {
+    CHECK(links[link].production == doctest::Approx(60));
+    CHECK(links[link].consumption == doctest::Approx(60));
+    CHECK(links[link].not_matched_flow == 0.0);
+    CHECK((links[link].flags & LinkFlags::kLinkNotMatched) == 0);
+  }
+}
+
+TEST_CASE("sodium hydroxide: without the recycle the loop breaks visibly") {
+  // Same chain minus calcination/slaking: slaked lime has no producer (its
+  // link is one-sided -> dropped constraint, shows as a missing input) and
+  // calcium carbonate has no consumer (surplus "extra product").
+  enum : int { kSodaAsh, kSlakedLime, kNaOH, kCaCO3, kLinks };
+  std::vector<SolverLink> links(kLinks);
+  links[kSodaAsh] = {.name = "soda-ash"};
+  links[kSlakedLime] = {.name = "slaked-lime"};
+  links[kNaOH] = {.name = "sodium-hydroxide", .amount = 60};
+  links[kCaCO3] = {.name = "calcium-carbonate"};
+
+  std::vector<SolverRecipe> recipes(2);
+  recipes[0] = {.name = "causticize",
+                .products = {{kNaOH, 1}, {kCaCO3, 1}},
+                .ingredients = {{kSodaAsh, 1}, {kSlakedLime, 1}}};
+  recipes[1] = {.name = "make-soda-ash", .products = {{kSodaAsh, 1}}};
+
+  REQUIRE(SolveProductionTable(recipes, links) == TableSolveResult::Ok);
+  CHECK(recipes[0].recipes_per_second == doctest::Approx(60));
+
+  // Slaked lime: consumption without production -> disabled link, net import.
+  CHECK((links[kSlakedLime].flags & LinkFlags::kHasProduction) == 0);
+  CHECK((links[kSlakedLime].flags & LinkFlags::kLinkNotMatched) != 0);
+  CHECK(links[kSlakedLime].consumption == doctest::Approx(60));
+  CHECK(links[kSlakedLime].production == 0.0);
+
+  // Calcium carbonate: production without consumption -> extra product.
+  CHECK((links[kCaCO3].flags & LinkFlags::kHasConsumption) == 0);
+  CHECK((links[kCaCO3].flags & LinkFlags::kLinkNotMatched) != 0);
+  CHECK(links[kCaCO3].production == doctest::Approx(60));
+}
