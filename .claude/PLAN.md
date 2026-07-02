@@ -114,8 +114,14 @@ Recipe + status: `solver-wasm/README.md`.
    coefficients, one-sided-link disabling, BaseCost objective, slack fallback with real
    GetInfeasibilityCandidates (splits + SCC deadlocks + chords), notMatchedFlow +
    bit-compatible link/warning flags, per-link production/consumption totals. 7 test
-   scenarios both targets. Remaining: hierarchical Setup/flatten (needs the data model),
-   CalculateFlow rollup, CheckBuiltCountExceeded, CostAnalysis port.
+   scenarios both targets. [x] CostAnalysis ported 2026-07-02
+   (`src/yafc/analysis/cost_analysis.*`): full LP (logistics/power/pollution costs, single
+   fuel selection, spoilage-container special case, mining rarity penalty, misc-source and
+   fluid/heat temperature-chain constraints), flows from constraint duals, recipe waste %,
+   entity placement costs, important-items ranking; accessibility via AccessibilityHooks
+   seam until Milestones/Automation are ported; TechnologyScienceAnalysis targetTechnology
+   mode TODO. Remaining: hierarchical Setup/flatten, CalculateFlow rollup,
+   CheckBuiltCountExceeded, Milestones/Automation analyses.
 3. Serialization (sized 2026-07-02: upstream = 2,009 loc infra + ~20 serialized classes;
    C++ ≈ 1.5-2.5k loc + ~1 line per property in per-class field lists; ~3-5 focused days on
    top of the model classes; risk is compat quirks — obsolete-prop migration, unknown-prop

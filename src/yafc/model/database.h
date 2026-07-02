@@ -99,6 +99,10 @@ class FactorioIdRange {
   std::vector<T*> all_;
 };
 
+// Convenience alias: yafc::Mapping<Goods, float> == dense per-Goods floats.
+template <typename TKey, typename TValue>
+using Mapping = typename FactorioIdRange<TKey>::template Mapping<TValue>;
+
 class Database {
  public:
   // Takes ownership of all objects, stable-sorts them by sortingOrder (so each
@@ -129,6 +133,10 @@ class Database {
   FactorioIdRange<Location> locations;
 
   std::unordered_map<std::string, FactorioObject*> objectsByTypeName;
+  // name -> temperature-sorted fluid variants; filled by the parser (upstream
+  // LoadBuiltData parameters).
+  std::unordered_map<std::string, std::vector<Fluid*>> fluidVariants;
+  std::vector<Special*> heatVariants;
   std::vector<Item*> allSciencePacks;
   std::vector<Module*> allModules;
   std::vector<EntityCrafter*> allCrafters;

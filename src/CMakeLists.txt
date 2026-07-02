@@ -1,4 +1,5 @@
 add_library(yafc_core
+  yafc/analysis/cost_analysis.cc
   yafc/model/data_classes.cc
   yafc/model/database.cc
   yafc/model/production_table_solver.cc

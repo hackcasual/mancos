@@ -111,6 +111,9 @@ LpResult LpSolver::Solve() {
   glop::GlopParameters params;
   google::protobuf::TextFormat::ParseFromString(parameters_text_, &params);
   solver_->SetParameters(params);
+  // glop requires columns ordered by row with no zero coefficients; the C#
+  // MPSolver wrapper does this internally before every solve.
+  lp_->CleanUp();
   return ToResult(solver_->Solve(*lp_));
 }
 
