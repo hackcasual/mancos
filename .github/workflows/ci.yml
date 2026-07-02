@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # or-tools + emsdk + lua take ~40 min to build cold; cache the whole
+      # third_party tree keyed on the recipe inputs.
+      - name: Cache third_party
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: third-party-v1-${{ hashFiles('scripts/bootstrap.sh', 'patches/**') }}
+
+      - name: Bootstrap toolchains and deps
+        run: ./scripts/bootstrap.sh
+
+      - name: Native build + tests
+        run: ./scripts/build-native.sh
+
+      - name: Wasm build + tests (node)
+        run: ./scripts/build-wasm.sh

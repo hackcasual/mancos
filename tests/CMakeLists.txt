@@ -1,0 +1,23 @@
+include(FetchContent)
+FetchContent_Declare(
+  doctest
+  URL https://github.com/doctest/doctest/archive/refs/tags/v2.4.12.tar.gz
+  URL_HASH SHA256=73381c7aa4dee704bd935609668cf41880ea7f19fa0504a200e13b74999c2d70
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(doctest)
+
+add_executable(yafc_tests
+  test_main.cc
+  solver_test.cc
+  lua_test.cc
+)
+target_link_libraries(yafc_tests PRIVATE yafc_core doctest::doctest)
+
+if(EMSCRIPTEN)
+  target_link_options(yafc_tests PRIVATE
+    -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576)
+endif()
+
+# Under emscripten, CMAKE_CROSSCOMPILING_EMULATOR (node) runs the .js output.
+add_test(NAME yafc_tests COMMAND yafc_tests)

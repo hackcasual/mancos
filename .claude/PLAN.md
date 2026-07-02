@@ -75,18 +75,23 @@ The load-bearing native dep, proven first:
 
 Recipe + status: `solver-wasm/README.md`.
 
-## Phase 1 — C++ project skeleton
+## Phase 1 — C++ project skeleton — DONE 2026-07-02 (deferred bits noted)
 
-1. `src/` CMake project, C++20; two first-class targets from day one:
-   native desktop (Linux) for fast iteration/tests, and wasm via emcmake.
-2. Vendor/build deps both ways: glop (from Phase 0), Lua 5.2.1 + Factorio patches
-   (reuse `third_party/yafc-ce/lua/*.patch`), SDL2/SDL2_ttf/SDL2_image
-   (system libs natively; `-sUSE_SDL=2` ports on wasm), libzip, a JSON lib
-   (project files + data), {fmt} or std::format.
-3. CI: build both targets + run unit tests natively and under node.
-4. Decide base infrastructure: error handling policy, string type (UTF-8 std::string),
-   ownership model for the object graph (model objects live in arenas owned by the
-   database/project; raw pointers between them, like the C# object graph but explicit).
+1. [x] Root CMake project, C++20, native (`scripts/build-native.sh`) + wasm
+       (`scripts/build-wasm.sh`) targets; `scripts/bootstrap.sh` fetches/builds all of
+       third_party (emsdk, or-tools+patch, lua, yafc-ce ref); tests via ctest run natively
+       and under node (emscripten's CROSSCOMPILING_EMULATOR). Native test loop: ~0.01s.
+2. [x] glop imported from or-tools build trees (`cmake/ortools_glop.cmake`; native needs
+       LINK_GROUP:RESCAN for absl's circular archives). Lua 5.2.1 + Factorio patch built
+       both ways (`cmake/lua.cmake`); patch behavior locked by tests (insertion-ordered
+       pairs(), tolerant next()). `yafc::LpSolver` wrapper mirrors the C# Solver API names;
+       Phase 0 tracer now lives on as `tests/solver_test.cc` on both targets.
+       Deferred to the phase that needs them: SDL2 (Phase 4), libzip + JSON lib (Phase 2/3).
+3. [x] CI workflow `.github/workflows/ci.yml` (bootstrap cached on patch/script hash;
+       both targets) — unverified until a GitHub remote exists.
+4. [~] Base infra: UTF-8 std::string throughout; error handling = status returns near the
+       solver, exceptions off on wasm. Object-graph ownership decided at Phase 2 start
+       (leaning: arena owned by Database/Project, raw non-owning pointers between objects).
 
 ## Phase 2 — Port Yafc.Model (headless core)
 

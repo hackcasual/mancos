@@ -1,7 +1,8 @@
-# vendored toolchains / reference sources (fetched by scripts, not tracked)
+# vendored toolchains / reference sources (fetched by scripts/bootstrap.sh)
 third_party/emsdk/
 third_party/or-tools/
 third_party/yafc-ce/
+third_party/lua-5.2.1/
 
 # local Factorio game data + mods (user-supplied, never committed)
 data/
