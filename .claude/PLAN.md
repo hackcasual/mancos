@@ -99,9 +99,16 @@ Recipe + status: `solver-wasm/README.md`.
 
 ## Phase 2 — Port Yafc.Model (headless core)
 
-1. Data model: FactorioObject hierarchy (goods/items/fluids/recipes/entities/technologies,
-   quality variants), Database container, mappings (`CreateMapping<T>` → typed arrays keyed
-   by object id — ports naturally to `std::vector` indexed by dense ids).
+1. Data model: [x] ported 2026-07-02 (`src/yafc/model/data_classes.{h,cc}` +
+   `database.{h,cc}`): FactorioObject hierarchy (Goods/Item/Module/Fluid/Special,
+   RecipeOrTechnology/Recipe/Mechanics/Technology, Entity family incl. crafters/labs,
+   Quality with upstream bonus math, Ingredient/Product with catalyst-productivity math,
+   ObjectWithQuality), Database with LoadBuiltData id assignment (stable sort by
+   FactorioObjectSortOrder → contiguous per-type ranges), FactorioIdRange views, dense 1D/2D
+   Mappings, typeDotName lookup + alias support, derived collections (allModules/allCrafters/
+   allSciencePacks/...). C# camelCase field names kept for mechanical porting. Trimmed for
+   now: GetDependencies (arrives with milestone analysis), spoilage Lazy resolution (loader
+   fills fields), attractor/spawner/projectile entity subclasses.
 2. Solver: [x] flat solve core ported 2026-07-02 (`src/yafc/model/production_table_solver.*`
    + `graph.h` Tarjan SCC): LinkAlgorithm bounds, fixed buildings, accumulating link
    coefficients, one-sided-link disabling, BaseCost objective, slack fallback with real

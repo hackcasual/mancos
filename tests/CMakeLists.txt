@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(doctest)
 
 add_executable(yafc_tests
   test_main.cc
+  database_test.cc
   graph_test.cc
   production_table_solver_test.cc
   solver_test.cc
