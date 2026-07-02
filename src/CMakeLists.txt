@@ -1,4 +1,5 @@
 add_library(yafc_core
+  yafc/model/production_table_solver.cc
   yafc/solver/lp.cc
   yafc/lua/lua_vm.cc
 )

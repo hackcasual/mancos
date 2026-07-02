@@ -8,8 +8,12 @@ Emscripten. Chosen over .NET-WASM/Blazor hosting of the existing C# because it g
 user experience and a simpler system:
 - payload: a C++ build ships a few MB of wasm vs ~30+ MB of .NET runtime + assemblies;
   startup is near-instant, no JIT/interpreter warm-up, no GC pauses.
-- all three native deps become *direct* dependencies — GLOP via its C++ API (no SWIG/P-Invoke
-  shim), Lua via its C API, SDL2 via Emscripten's built-in port — one toolchain, one linker.
+- the two hard native deps become *direct* dependencies — GLOP via its C++ API (no
+  SWIG/P-Invoke shim), Lua via its C API — one toolchain, one linker.
+- **UI decision (2026-07-02): web-native front-end** (HTML/DOM/canvas + TS) over a wasm-core
+  API — SDL2/SDL2_ttf/SDL2_image are NOT ported; the browser already provides events, text,
+  fonts, PNG decode, clipboard. I18n lives in the web layer (message catalogs + Intl);
+  the C++ core returns typed codes, never localized strings.
 - no dotnet↔emscripten version-lock problem (dotnet pins its own emsdk for NativeFileReference).
 - native desktop builds fall out for free (same C++ + real SDL2), useful for dev and testing.
 
@@ -21,9 +25,9 @@ Reference clone lives in `third_party/yafc-ce` (upstream analysis only, not part
 |---|---|---|---|
 | `Yafc.Model` | 10.2k loc, 42 files | FactorioObject data model, production-table solver, analyses (cost, milestones, automation), reflection-based JSON serialization, undo system | Solver → `glop::LPSolver` direct (Phase 0 proves it). Serialization/undo need a C++ answer to C# reflection (see below) |
 | `Yafc.Parser` | 6.0k loc, 11 files | Runs Factorio's Lua data stage (patched Lua 5.2.1), mod discovery/dependency sort, mod-settings.dat parser, icon atlas building | Lua C API is *easier* from C++; SharpCompress → libzip/minizip; SDL_image stays |
-| `Yafc.UI` | 5.9k loc, 30 files | Custom immediate-mode GUI over SDL2/SDL_ttf (layout, widgets, scroll, drag, text input) | Port faithfully onto SDL2; Emscripten SDL2/ttf ports render to canvas. Multi-window (dropdowns/tooltips) must become overlays in-canvas |
-| `Yafc` (app) | 10.8k loc, 47 files | Screens/pages (production tables, milestones, preferences, wizards), main loop, project lifecycle | Straight port once UI layer exists |
-| `Yafc.I18n` | 0.4k | localization tables | trivial |
+| `Yafc.UI` | 5.9k loc, 30 files | Custom immediate-mode GUI over SDL2/SDL_ttf (layout, widgets, scroll, drag, text input) | NOT ported — replaced by a web-native front-end over the wasm-core API; reuse its interaction/layout design as spec |
+| `Yafc` (app) | 10.8k loc, 47 files | Screens/pages (production tables, milestones, preferences, wizards), main loop, project lifecycle | Screens rebuilt web-native; non-UI logic (project lifecycle) moves into the core |
+| `Yafc.I18n` | 0.4k | localization tables | web-layer i18n (catalogs + Intl); core emits typed codes; upstream translations convertible as data |
 | `Yafc.Core` | 27 loc | misc | trivial |
 
 ### Dependency inventory → C++ replacements
@@ -33,7 +37,7 @@ Native:
 |---|---|---|
 | Google.OrTools 9.15 (GLOP) | Yafc.Model (3 files) | or-tools standalone glop lib, direct `glop::LPSolver` (Phase 0) |
 | Lua 5.2.1 + Factorio patches (vendored, P/Invoke) | Yafc.Parser LuaContext | same source + patches, direct C API, emcc-compiled |
-| SDL2, SDL2_ttf, SDL2_image (SDL2-CS bindings) | Yafc.UI | Emscripten `-sUSE_SDL=2` ports / system SDL2 natively |
+| SDL2, SDL2_ttf, SDL2_image (SDL2-CS bindings) | Yafc.UI | dropped — web-native UI; browser does events/fonts/PNG/clipboard |
 | SHCore.dll (Windows DPI) | Yafc.UI | drop |
 
 Managed NuGet:
@@ -98,8 +102,13 @@ Recipe + status: `solver-wasm/README.md`.
 1. Data model: FactorioObject hierarchy (goods/items/fluids/recipes/entities/technologies,
    quality variants), Database container, mappings (`CreateMapping<T>` → typed arrays keyed
    by object id — ports naturally to `std::vector` indexed by dense ids).
-2. Solver: ProductionTable solve loop incl. slack-variable infeasibility fallback and
-   `TrySolveWithDifferentSeeds`; CostAnalysis. Direct `glop::LPSolver` per Phase 0 demo.
+2. Solver: [x] flat solve core ported 2026-07-02 (`src/yafc/model/production_table_solver.*`
+   + `graph.h` Tarjan SCC): LinkAlgorithm bounds, fixed buildings, accumulating link
+   coefficients, one-sided-link disabling, BaseCost objective, slack fallback with real
+   GetInfeasibilityCandidates (splits + SCC deadlocks + chords), notMatchedFlow +
+   bit-compatible link/warning flags, per-link production/consumption totals. 7 test
+   scenarios both targets. Remaining: hierarchical Setup/flatten (needs the data model),
+   CalculateFlow rollup, CheckBuiltCountExceeded, CostAnalysis port.
 3. Serialization (sized 2026-07-02: upstream = 2,009 loc infra + ~20 serialized classes;
    C++ ≈ 1.5-2.5k loc + ~1 line per property in per-class field lists; ~3-5 focused days on
    top of the model classes; risk is compat quirks — obsolete-prop migration, unknown-prop
@@ -132,27 +141,37 @@ Recipe + status: `solver-wasm/README.md`.
    user to supply game files, same as yafc today).
 5. Perf checkpoint: full vanilla data stage under wasm; budget ~seconds, streamed progress.
 
-## Phase 4 — Port Yafc.UI + app screens
+## Phase 4 — Web-native UI (decision 2026-07-02: no SDL port)
 
-1. Port the immediate-mode GUI core (ImGui.cs, layout, batching, text cache, input) onto
-   SDL2; keep yafc's look/behavior — it's a calculator UI, fidelity matters to users.
-   Spike first: SDL2 renderer + SDL_ttf under emscripten in-canvas (fonts, DPI, IME/text
-   input, clipboard, cursors, mouse wheel).
-2. Multi-window usage (dropdown panels, dialogs, tooltips as OS windows) → in-canvas
-   overlay windows managed by our compositor; desktop target may keep real windows.
-3. Port app screens incrementally: main production table view first (usable milestone!),
-   then milestones/settings/wizards/blueprints etc.
-4. Browser niceties: canvas resize/DPI, touch (stretch), persistent preferences
-   (localStorage/OPFS).
+1. Define the wasm-core API boundary (embind or C ABI + small TS glue): project
+   open/save, table & link CRUD, solve, database queries (goods/recipes/icons), undo.
+   Core emits typed warning/error codes + structured results; all presentation and i18n
+   live in the web layer.
+2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
+   production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
+   the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.
+3. I18n web-native: message catalogs (ICU-style) + Intl for numbers/units; convert
+   yafc-ce's existing translation files as seed data.
+4. Screens incrementally: production table view first (usable milestone!), then
+   milestones/settings/wizards/blueprints. Preferences in localStorage/OPFS.
 
 ## Phase 5 — Product & packaging
 
 - Static hosting; wasm size budget & brotli; lazy-load data-stage worker.
 - Project persistence: OPFS autosave + file import/export (compatible `.yafc` JSON).
-- Threading: solver/data-stage in workers (pthreads need COOP/COEP — coi-serviceworker on
-  GitHub Pages, or single-threaded + async slicing as fallback).
 - Upstream tracking: pin the ported yafc-ce commit; document porting status per file;
   periodically diff upstream for calculator-logic fixes to forward-port.
+
+## Threading & performance (directive 2026-07-02: multithreaded, off-main-thread solving)
+
+- Architecture: the wasm core runs in a **dedicated Web Worker** from day one — the main
+  thread only does UI; solve/data-stage requests are async messages. This also sidesteps
+  most COOP/COEP pain until pthreads are enabled.
+- Within the core: wasm pthreads (SharedArrayBuffer, COOP/COEP headers — coi-serviceworker
+  for static hosts) for parallel work: concurrent table solves, analyses, data-stage
+  subtasks. Desktop native uses std::thread identically.
+- Polish pass: build with `-msimd128` (+ relaxed SIMD feature-detect), profile GLOP and the
+  Lua data stage; Emscripten BigInt/bulk-memory/threads flags tuned; measure before/after.
 
 ## Key risks
 
@@ -160,9 +179,9 @@ Recipe + status: `solver-wasm/README.md`.
    C# implementation (Phase 2.5) and by porting file-by-file, not redesigning.
 2. **Serialization without reflection** — visitor/member-list pattern, `.yafc` compat locked
    by round-trip tests against real project files.
-3. **SDL2 UI in canvas** — Phase 4 spike early (text input/IME is the classic pain);
-   fallback is a rewrite of the front-end in web tech over the C++ core (JS interop via
-   embind), decided at the spike.
+3. **UI rewrite volume + API boundary design** — the web-native front-end is new code
+   (~specced by Yafc.UI/Yafc behavior); keep the wasm-core API thin and typed, spike the
+   table grid early to fix the rendering approach.
 4. **Data-stage size/perf in browser** — worker + progress; prepackaged vanilla dump option.
 5. **Game-asset licensing for a hosted app** — icons/sounds are Wube's; require user-supplied
    game files (as desktop yafc does) unless cleared otherwise.
