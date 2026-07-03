@@ -13,6 +13,7 @@
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
+#include <miniz.h>
 #include <nlohmann/json.hpp>
 
 #include "yafc/model/production_table.h"
@@ -300,64 +301,76 @@ static std::string searchTechs(std::string query, int limit) {
   return results.dump();
 }
 
-// ---- projects: session table <-> Project pages[0] (human priority 1) ----
+// ---- projects (human priority 1 + multi-page) ----
+// Pages live in JS state; the C++ side converts between the .yafc Project
+// format and per-page UI mirrors. The solve workspace holds the active page.
 
-static std::string projectSave() {
+// pagesJson: [{name, goals:[{tdn,perMin}], linked:[tdn], rows:[{tdn}]}]
+static std::string projectSaveAll(std::string pagesJson) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
+  json pages = json::parse(pagesJson, nullptr, false);
+  if (pages.is_discarded() || !pages.is_array()) return Err("bad pages state");
   Project project;
-  auto page = std::make_unique<ProjectPage>();
-  page->name = "Web table";
-  for (const auto& link : g_table->links) {
-    ProductionLink* copy = page->content.AddLink(link->goods, link->amount);
-    copy->algorithm = link->algorithm;
+  for (const json& p : pages) {
+    auto page = std::make_unique<ProjectPage>();
+    page->name = p.value("name", "Page");
+    for (const json& goal : p.value("goals", json::array())) {
+      auto* goods = dynamic_cast<Goods*>(
+          Db().FindByTypeDotName(goal.value("tdn", "")));
+      if (goods == nullptr) continue;
+      // UI state is per-minute; .yafc stores per-second (desktop units).
+      page->content.AddLink({goods, nullptr}, goal.value("perMin", 0.0) / 60.0);
+    }
+    for (const json& tdn : p.value("linked", json::array())) {
+      auto* goods = dynamic_cast<Goods*>(
+          Db().FindByTypeDotName(tdn.get<std::string>()));
+      if (goods != nullptr) page->content.AddLink({goods, nullptr}, 0);
+    }
+    for (const json& row : p.value("rows", json::array())) {
+      auto* recipe = dynamic_cast<RecipeOrTechnology*>(
+          Db().FindByTypeDotName(row.value("tdn", "")));
+      if (recipe != nullptr) page->content.AddRecipe(recipe);
+    }
+    project.pages.push_back(std::move(page));
   }
-  for (const auto& row : g_table->recipes) {
-    if (row->recipe == nullptr) continue;
-    RecipeRow* copy = page->content.AddRecipe(row->recipe);
-    copy->enabled = row->enabled;
-    copy->fixedBuildings = row->fixedBuildings;
-  }
-  project.pages.push_back(std::move(page));
   return SaveProjectToString(project, /*indent=*/0);
 }
 
-// Loads a project's first page into the session table; nested subgroups are
-// flattened (the web table is flat for now). Returns the UI state mirror.
+// Returns every page as a UI mirror; nested subgroups are flattened.
 static std::string projectLoad(std::string text) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   LoadResult loaded = LoadProjectFromString(text, Db());
   if (loaded.project == nullptr || loaded.project->pages.empty()) {
     return Err("not a yafc project (no pages)");
   }
-  ProductionTable& source = loaded.project->pages[0]->content;
-  g_table = std::make_unique<ProductionTable>();
-  json goals = json::array(), linked = json::array(), rows = json::array();
-  for (const auto& link : source.links) {
-    if (link->goods.target == nullptr) continue;
-    ProductionLink* copy = g_table->AddLink(link->goods, link->amount);
-    copy->algorithm = link->algorithm;
-    if (link->amount != 0) {
-      // Desktop projects store per-second amounts; the UI state is per-minute.
-      goals.push_back(json{{"tdn", link->goods.target->typeDotName()},
-                           {"name", link->goods.target->locName},
-                           {"perMin", link->amount * 60}});
-    } else {
-      linked.push_back(link->goods.target->typeDotName());
+  json pages = json::array();
+  for (const auto& pagePtr : loaded.project->pages) {
+    ProductionTable& source = pagePtr->content;
+    json goals = json::array(), linked = json::array(), rows = json::array();
+    for (const auto& link : source.links) {
+      if (link->goods.target == nullptr) continue;
+      if (link->amount != 0) {
+        goals.push_back(json{{"tdn", link->goods.target->typeDotName()},
+                             {"name", link->goods.target->locName},
+                             {"perMin", link->amount * 60}});
+      } else {
+        linked.push_back(link->goods.target->typeDotName());
+      }
     }
-  }
-  std::vector<RecipeRow*> allRows;
-  source.GetAllRecipes(allRows);
-  for (const RecipeRow* row : allRows) {
-    if (row->recipe == nullptr) continue;
-    RecipeRow* copy = g_table->AddRecipe(row->recipe);
-    copy->enabled = row->enabled;
-    copy->fixedBuildings = row->fixedBuildings;
-    rows.push_back(json{{"tdn", row->recipe->typeDotName()}});
+    std::vector<RecipeRow*> allRows;
+    source.GetAllRecipes(allRows);
+    for (const RecipeRow* row : allRows) {
+      if (row->recipe == nullptr) continue;
+      rows.push_back(json{{"tdn", row->recipe->typeDotName()}});
+    }
+    pages.push_back(json{{"name", pagePtr->name},
+                         {"goals", std::move(goals)},
+                         {"linked", std::move(linked)},
+                         {"rows", std::move(rows)}});
   }
   json errors = json::array();
   for (const std::string& error : loaded.errors) errors.push_back(error);
-  return json{{"goals", std::move(goals)}, {"linked", std::move(linked)},
-              {"rows", std::move(rows)}, {"errors", std::move(errors)}}.dump();
+  return json{{"pages", std::move(pages)}, {"errors", std::move(errors)}}.dump();
 }
 
 static std::string iconLayers(std::string tdn) {
@@ -374,7 +387,46 @@ static emscripten::val iconFile(std::string file) {
       reinterpret_cast<const uint8_t*>(it->second.data())));
 }
 
+// Share-link compression fallback (zlib format, wire-compatible with the
+// page's CompressionStream('deflate') path) for browsers without the
+// Compression Streams API. Static buffers back the returned views.
+static std::string g_zlibBuffer;
+
+static emscripten::val zlibDeflate(unsigned ptr, unsigned length) {
+  const auto* src = reinterpret_cast<const unsigned char*>(
+      static_cast<uintptr_t>(ptr));
+  mz_ulong bound = mz_compressBound(length);
+  g_zlibBuffer.resize(bound);
+  mz_ulong outLength = bound;
+  if (mz_compress2(reinterpret_cast<unsigned char*>(g_zlibBuffer.data()),
+                   &outLength, src, length, MZ_BEST_COMPRESSION) != MZ_OK) {
+    return emscripten::val::null();
+  }
+  return emscripten::val(emscripten::typed_memory_view(
+      outLength, reinterpret_cast<const uint8_t*>(g_zlibBuffer.data())));
+}
+
+static emscripten::val zlibInflate(unsigned ptr, unsigned length) {
+  const auto* src = reinterpret_cast<const unsigned char*>(
+      static_cast<uintptr_t>(ptr));
+  for (mz_ulong capacity = std::max(length * 8u, 64u * 1024u);
+       capacity <= 256u * 1024u * 1024u; capacity *= 4) {
+    g_zlibBuffer.resize(capacity);
+    mz_ulong outLength = capacity;
+    int rc = mz_uncompress(reinterpret_cast<unsigned char*>(g_zlibBuffer.data()),
+                           &outLength, src, length);
+    if (rc == MZ_OK) {
+      return emscripten::val(emscripten::typed_memory_view(
+          outLength, reinterpret_cast<const uint8_t*>(g_zlibBuffer.data())));
+    }
+    if (rc != MZ_BUF_ERROR) break;  // grow only on insufficient buffer
+  }
+  return emscripten::val::null();
+}
+
 EMSCRIPTEN_BINDINGS(yafc_web) {
+  emscripten::function("zlibDeflate", &zlibDeflate);
+  emscripten::function("zlibInflate", &zlibInflate);
   emscripten::function("loadBundlePtr", &loadBundlePtr);
   emscripten::function("searchGoods", &searchGoods);
   emscripten::function("goodsInfo", &goodsInfo);
@@ -382,7 +434,7 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableAddLink", &tableAddLink);
   emscripten::function("tableAddRecipe", &tableAddRecipe);
   emscripten::function("tableSolve", &tableSolve);
-  emscripten::function("projectSave", &projectSave);
+  emscripten::function("projectSaveAll", &projectSaveAll);
   emscripten::function("projectLoad", &projectLoad);
   emscripten::function("listLanguages", &listLanguages);
   emscripten::function("setLanguage", &setLanguage);

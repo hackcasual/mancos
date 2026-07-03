@@ -65,7 +65,7 @@ endif()
 option(YAFC_WEB "Build the web (embind) module" OFF)
 if(EMSCRIPTEN AND YAFC_WEB)
   add_executable(yafc_web src/web/web_api.cc)
-  target_link_libraries(yafc_web PRIVATE yafc_core)
+  target_link_libraries(yafc_web PRIVATE yafc_core miniz)
   target_link_options(yafc_web PRIVATE
     --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcModule
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152

@@ -89,11 +89,30 @@ async function iconImg(tdn) {
   }
 }
 
-// ---- table state (persisted per bundle) ----
-let goals = [];   // {tdn, name, perMin}
-let linked = [];  // tdn[]
-let rows = [];    // {tdn}
+// ---- table state: pages of {name, goals, linked, rows}; the active page's
+// fields are aliased into goals/linked/rows for the render/solve paths ----
+let pages = [newPage('Page 1')];
+let activePage = 0;
+let goals = pages[0].goals;   // {tdn, name, perMin}
+let linked = pages[0].linked; // tdn[]
+let rows = pages[0].rows;     // {tdn}
 let bundleKey = null;
+
+function newPage(name) {
+  return { name, goals: [], linked: [], rows: [] };
+}
+function bindActivePage() {
+  const page = pages[activePage];
+  goals = page.goals;
+  linked = page.linked;
+  rows = page.rows;
+}
+function setActivePage(index) {
+  activePage = Math.max(0, Math.min(index, pages.length - 1));
+  bindActivePage();
+  renderPageTabs();
+  rebuildAndSolve();
+}
 let research = { filter: false, techs: [] };
 
 async function pushResearch() {
@@ -103,17 +122,57 @@ async function pushResearch() {
 
 function persist() {
   if (bundleKey) {
-    localStorage.setItem(bundleKey, JSON.stringify({ goals, linked, rows }));
+    localStorage.setItem(bundleKey, JSON.stringify({ pages, activePage }));
   }
 }
 function restore() {
   const saved = bundleKey && localStorage.getItem(bundleKey);
   if (!saved) return false;
   try {
-    ({ goals = [], linked = [], rows = [] } = JSON.parse(saved));
-    return goals.length + linked.length + rows.length > 0;
+    const parsed = JSON.parse(saved);
+    if (Array.isArray(parsed.pages) && parsed.pages.length > 0) {
+      pages = parsed.pages;
+      activePage = Math.min(parsed.activePage ?? 0, pages.length - 1);
+    } else {
+      // Migrate the old single-table shape.
+      pages = [{ name: 'Page 1', goals: parsed.goals ?? [],
+                 linked: parsed.linked ?? [], rows: parsed.rows ?? [] }];
+      activePage = 0;
+    }
+    bindActivePage();
+    renderPageTabs();
+    return pages.some((p) => p.goals.length + p.linked.length + p.rows.length > 0);
   } catch {
     return false;
+  }
+}
+
+// ---- page tabs ----
+function renderPageTabs() {
+  const tabs = pages.map((p, i) =>
+      `<button class="small${i === activePage ? '' : ' ghost'}" data-page="${i}"
+         title="Double-click to rename">${esc(p.name)}</button>`).join('');
+  $('#pageTabs').innerHTML = tabs +
+      ` <button class="small ghost" id="addPage" title="Add page">+</button>` +
+      (pages.length > 1 ? ` <button class="x" id="removePage" title="Remove page">✕</button>` : '');
+  for (const btn of $('#pageTabs').querySelectorAll('[data-page]')) {
+    btn.onclick = () => setActivePage(+btn.dataset.page);
+    btn.ondblclick = () => {
+      const name = prompt('Page name:', pages[+btn.dataset.page].name);
+      if (name) { pages[+btn.dataset.page].name = name; renderPageTabs(); persist(); }
+    };
+  }
+  $('#addPage').onclick = () => {
+    pages.push(newPage(`Page ${pages.length + 1}`));
+    setActivePage(pages.length - 1);
+  };
+  const remove = $('#removePage');
+  if (remove) {
+    remove.onclick = () => {
+      if (!confirm(`Remove page "${pages[activePage].name}"?`)) return;
+      pages.splice(activePage, 1);
+      setActivePage(Math.max(0, activePage - 1));
+    };
   }
 }
 
@@ -193,7 +252,8 @@ async function renderSolve(result) {
   $('#links').innerHTML = linkPills.join('') || '<span class="muted">—</span>';
   for (const btn of $('#links').querySelectorAll('[data-unlink]')) {
     btn.onclick = () => {
-      linked = linked.filter((tdn) => tdn !== btn.dataset.unlink);
+      pages[activePage].linked = linked.filter((tdn) => tdn !== btn.dataset.unlink);
+      bindActivePage();
       rebuildAndSolve();
     };
   }
@@ -287,10 +347,19 @@ async function showGoods(tdn) {
 }
 
 // ---- projects: import/export/share (human priorities 1+2) ----
+// zlib format on both paths: the browser's Compression Streams API when
+// available, otherwise miniz inside the wasm module — wire-compatible, so a
+// link minted on either path opens on the other.
 async function deflateBase64Url(text) {
-  const stream = new Blob([text]).stream()
-      .pipeThrough(new CompressionStream('deflate-raw'));
-  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let bytes;
+  if (typeof CompressionStream !== 'undefined') {
+    const stream = new Blob([text]).stream()
+        .pipeThrough(new CompressionStream('deflate'));
+    bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  } else {
+    const buffer = await rpc('zlib', 'deflate', new TextEncoder().encode(text).buffer);
+    bytes = new Uint8Array(buffer);
+  }
   let binary = '';
   for (const b of bytes) binary += String.fromCharCode(b);
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
@@ -298,16 +367,26 @@ async function deflateBase64Url(text) {
 async function inflateBase64Url(encoded) {
   const binary = atob(encoded.replaceAll('-', '+').replaceAll('_', '/'));
   const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-  const stream = new Blob([bytes]).stream()
-      .pipeThrough(new DecompressionStream('deflate-raw'));
-  return new Response(stream).text();
+  if (typeof DecompressionStream !== 'undefined') {
+    const stream = new Blob([bytes]).stream()
+        .pipeThrough(new DecompressionStream('deflate'));
+    return new Response(stream).text();
+  }
+  const buffer = await rpc('zlib', 'inflate', bytes.buffer);
+  return new TextDecoder().decode(buffer);
 }
 
 async function applyLoadedProject(state) {
   if (state.error) { status(`project load failed: ${state.error}`); return; }
-  goals = state.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin }));
-  linked = state.linked;
-  rows = state.rows;
+  pages = state.pages.map((p, i) => ({
+    name: p.name || `Page ${i + 1}`,
+    goals: p.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin })),
+    linked: p.linked,
+    rows: p.rows,
+  }));
+  activePage = 0;
+  bindActivePage();
+  renderPageTabs();
   if (state.errors?.length) status(`project loaded with ${state.errors.length} warnings`);
   await rebuildAndSolve();
 }
@@ -317,7 +396,8 @@ async function importProjectText(text) {
 }
 
 $('#shareBtn').onclick = async () => {
-  const text = await rpc('projectSaveRaw');
+  persist();
+  const text = await rpc('projectSaveRaw', JSON.stringify(pages));
   const encoded = await deflateBase64Url(text);
   const url = `${location.origin}${location.pathname}?p=${encoded}`;
   try {
@@ -328,7 +408,8 @@ $('#shareBtn').onclick = async () => {
   }
 };
 $('#exportBtn').onclick = async () => {
-  const text = await rpc('projectSaveRaw');
+  persist();
+  const text = await rpc('projectSaveRaw', JSON.stringify(pages));
   const a2 = document.createElement('a');
   a2.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
   a2.download = 'factory.yafc';
@@ -549,8 +630,12 @@ async function loadBundleBuffer(buffer, label, packId) {
   $('#workspace').hidden = false;
   const fromUrl = await loadProjectFromUrl();
   if (!fromUrl) {
-    if (restore()) rebuildAndSolve();
-    else renderSolve({ status: 0, rows: [], links: [], flows: [] });
+    if (restore()) {
+      rebuildAndSolve();
+    } else {
+      renderPageTabs();
+      renderSolve({ status: 0, rows: [], links: [], flows: [] });
+    }
   }
   for (const id of ['shareBtn', 'exportBtn', 'importBtn']) {
     document.getElementById(id).disabled = false;
@@ -575,6 +660,7 @@ document.addEventListener('click', (e) => {
 
 initPacks();
 $('#clearBtn').onclick = () => {
-  goals = []; linked = []; rows = [];
+  pages[activePage] = newPage(pages[activePage].name);
+  bindActivePage();
   rebuildAndSolve();
 };

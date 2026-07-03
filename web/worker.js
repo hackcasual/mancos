@@ -35,8 +35,25 @@ self.onmessage = async (event) => {
         }
         break;
       }
+      case 'zlib': {
+        // args: ['deflate'|'inflate', ArrayBuffer] — miniz fallback path.
+        const bytes = new Uint8Array(args[1]);
+        const p = mod._malloc(bytes.length);
+        mod.HEAPU8.set(bytes, p);
+        try {
+          const view = args[0] === 'deflate' ? mod.zlibDeflate(p, bytes.length)
+                                             : mod.zlibInflate(p, bytes.length);
+          if (view === null) { result = null; break; }
+          const copy = new Uint8Array(view.length);
+          copy.set(view);
+          self.postMessage({ id, result: copy.buffer }, [copy.buffer]);
+          return;
+        } finally {
+          mod._free(p);
+        }
+      }
       case 'projectSaveRaw': {
-        result = mod.projectSave();  // raw .yafc text, not JSON-wrapped
+        result = mod.projectSaveAll(args[0]);  // raw .yafc text, not JSON-wrapped
         break;
       }
       default: {
