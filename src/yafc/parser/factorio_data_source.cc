@@ -243,9 +243,18 @@ std::vector<std::string> ModSet::GetAllModFiles(const std::string& mod,
   fs::path base = fs::path(it->second->folder);
   fs::path dir = base / prefix;
   if (!fs::exists(dir)) return result;
+  // Relative paths by string prefix, NOT fs::relative: entries always live
+  // under base, and fs::relative canonicalizes (weakly_canonical) — which
+  // throws on Windows drive-letter paths ("C:\...") under the wasm/node FS
+  // layer, where they aren't decomposable POSIX prefixes.
+  std::string basePrefix = base.generic_string();
+  if (!basePrefix.empty() && basePrefix.back() != '/') basePrefix += '/';
   for (const auto& entry : fs::recursive_directory_iterator(dir)) {
     if (entry.is_regular_file()) {
-      result.push_back(fs::relative(entry.path(), base).generic_string());
+      std::string full = entry.path().generic_string();
+      result.push_back(full.rfind(basePrefix, 0) == 0
+                           ? full.substr(basePrefix.size())
+                           : full);
     }
   }
   return result;
