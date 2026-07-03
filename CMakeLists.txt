@@ -72,8 +72,11 @@ if(EMSCRIPTEN AND YAFC_WEB)
     # Resizable ArrayBuffers (default-on) break Firefox's TextDecoder on any
     # string crossing embind; use classic detach-on-grow memory instead.
     -sGROWABLE_ARRAYBUFFERS=0
-    # Emit the standardized try_table EH encoding (browsers deprecate 'try').
-    -sWASM_LEGACY_EXCEPTIONS=0
+    # NOTE: stay on legacy wasm EH ('try') for now — engines reject modules
+    # mixing encodings, and flipping requires rebuilding the whole prebuilt
+    # dep stack (or-tools/lua/miniz) with -sWASM_LEGACY_EXCEPTIONS=0 as a
+    # COMPILE flag too. Firefox's deprecation notice is cosmetic. Tracked in
+    # PLAN.md (packaging).
     -sEXPORTED_FUNCTIONS=_malloc,_free
     -sEXPORTED_RUNTIME_METHODS=HEAPU8
     -sENVIRONMENT=web,worker,node)
@@ -90,8 +93,11 @@ if(EMSCRIPTEN AND YAFC_WEB)
     --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcBundlerModule
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152
     -sGROWABLE_ARRAYBUFFERS=0
-    # Emit the standardized try_table EH encoding (browsers deprecate 'try').
-    -sWASM_LEGACY_EXCEPTIONS=0
+    # NOTE: stay on legacy wasm EH ('try') for now — engines reject modules
+    # mixing encodings, and flipping requires rebuilding the whole prebuilt
+    # dep stack (or-tools/lua/miniz) with -sWASM_LEGACY_EXCEPTIONS=0 as a
+    # COMPILE flag too. Firefox's deprecation notice is cosmetic. Tracked in
+    # PLAN.md (packaging).
     -sENVIRONMENT=worker
     -lworkerfs.js
     "SHELL:--pre-js ${CMAKE_SOURCE_DIR}/web/bundler_pre.js"

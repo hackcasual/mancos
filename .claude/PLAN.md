@@ -306,6 +306,14 @@ Recipe + status: `solver-wasm/README.md`.
 - Upstream tracking: pin the ported yafc-ce commit; document porting status per file;
   periodically diff upstream for calculator-logic fixes to forward-port.
 
+## Wasm EH migration (note 2026-07-03)
+
+Browsers deprecate the legacy 'try' EH encoding in favor of try_table. Migrating requires
+the NEW encoding consistently across every object: rebuild or-tools/lua/miniz archives and
+all targets with -sWASM_LEGACY_EXCEPTIONS=0 at compile AND link (engines hard-reject mixed
+modules; node 22 additionally needs --experimental-wasm-exnref). Until then the web module
+stays fully legacy — one cosmetic deprecation notice in Firefox.
+
 ## Threading & performance (directive 2026-07-02: multithreaded, off-main-thread solving)
 
 - Architecture: the wasm core runs in a **dedicated Web Worker** from day one — the main
