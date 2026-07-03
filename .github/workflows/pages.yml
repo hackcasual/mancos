@@ -53,7 +53,13 @@ jobs:
           git fetch origin beta || true
           if git show-ref --verify --quiet refs/remotes/origin/beta; then
             git worktree add "$RUNNER_TEMP/beta-src" origin/beta
-            ln -s "$PWD/third_party" "$RUNNER_TEMP/beta-src/third_party"
+            # third_party is partly tracked (stb), so link the bootstrapped
+            # toolchain subdirs individually into the worktree's copy.
+            for dep in third_party/*/; do
+              name=$(basename "$dep")
+              dest="$RUNNER_TEMP/beta-src/third_party/$name"
+              [ -e "$dest" ] || ln -s "$PWD/third_party/$name" "$dest"
+            done
             (cd "$RUNNER_TEMP/beta-src" && ./scripts/build-web.sh)
             mkdir -p site/beta
             cp -r "$RUNNER_TEMP/beta-src/web/dist/"* site/beta/
