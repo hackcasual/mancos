@@ -128,6 +128,21 @@
   .plate .crafts small { color: var(--muted); font-size: 11px; margin-left: 4px; }
   .plate .flows { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 5px 0 0 34px; font-size: 12.5px; }
   .flow { font-family: var(--mono); }
+  button.chip {
+    background: none; border: 0; padding: 0; color: inherit; font: inherit;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+  }
+  button.chip:hover { text-decoration: underline; text-decoration-color: var(--blueprint); }
+  button.chip img { width: 18px; height: 18px; }
+  .plate button.crafts {
+    margin-left: auto; background: none; border: 0; cursor: pointer;
+    font-family: var(--mono); font-size: 15px; color: inherit;
+  }
+  .plate button.crafts:hover { color: var(--blueprint); }
+  .plate button.crafts.pinned { color: var(--signal-amber); }
+  .plate button.crafts small { color: var(--muted); font-size: 11px; margin-left: 4px; }
+  .pill.goal.input { border-color: var(--signal-red); }
+  .pill.goal.input .amt { color: var(--signal-red); }
   .flow::before { content: "●"; font-size: 8px; vertical-align: 2px; margin-right: 5px; }
   .flow.pos { color: var(--signal-green); } .flow.pos::before { color: var(--signal-green); }
   .flow.neg { color: var(--signal-red); } .flow.neg::before { color: var(--signal-red); }

@@ -162,11 +162,16 @@ static std::string tableAddLink(std::string tdn, double amountPerMinute) {
   return json{{"ok", true}}.dump();
 }
 
-static std::string tableAddRecipe(std::string tdn) {
+// fixedCraftsPerSecond > 0 pins the row's rate (recipeTime defaults to 1 in
+// the parameters seam, so fixedBuildings == crafts/second).
+static std::string tableAddRecipe(std::string tdn, double fixedCraftsPerSecond) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* r = dynamic_cast<RecipeOrTechnology*>(Db().FindByTypeDotName(tdn));
   if (r == nullptr) return Err("unknown recipe " + tdn);
-  g_table->AddRecipe(r);
+  RecipeRow* row = g_table->AddRecipe(r);
+  if (fixedCraftsPerSecond > 0) {
+    row->fixedBuildings = static_cast<float>(fixedCraftsPerSecond);
+  }
   return json{{"ok", true}, {"recipe", RecipeBrief(r)}}.dump();
 }
 
