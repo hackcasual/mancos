@@ -204,7 +204,7 @@
   .ms-lock img { width: 16px !important; height: 16px !important; opacity: .8; }
 
   /* ---- row config dialog (building / fuel / modules / beacons) ---- */
-  #rowDialog { max-width: 640px; }
+  #rowDialog { max-width: 640px; max-height: 92vh; overflow-y: auto; }
   #rowDialog .opts { max-height: 180px; overflow-y: auto; margin: 4px 0 10px; }
   #rowDialog .opt {
     display: flex; gap: 8px; align-items: center; width: 100%; text-align: left;
@@ -226,6 +226,9 @@
     width: 72px; background: #14181f; color: inherit; font: inherit;
     border: 1px solid var(--panel-edge); border-radius: 3px; padding: 3px 6px;
   }
+  #rowDialog .modentry { padding: 2px 6px; }
+  #rowDialog .modentry img { width: 20px; height: 20px; image-rendering: pixelated; }
+  #rowDialog .modentry input { width: 60px; }
   #rowDialog .foot { display: flex; gap: 8px; margin-top: 10px; }
   #rowDialog .foot button:first-child { margin-left: auto; }
   .plate .mods { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }

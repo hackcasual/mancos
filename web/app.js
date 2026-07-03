@@ -861,44 +861,84 @@ async function renderRowConfig() {
   const fuels = (await Promise.all(opts.fuels.map((f) =>
       optRow(f, 'pick-fuel', f.tdn === effectiveFuel, `${f.fuelValue}MJ`)))).join('');
 
-  // Modules: current template as chips; one-click "fill all slots" choices.
-  const chips = (await Promise.all(rowConfig.list.map(async (m, idx) =>
-      `<span class="pill">${await iconImg(m.tdn)}
-        <span class="amt">${m.count === 0 ? 'fill' : '×' + m.count}</span>
-        <button class="x" data-mod-x="${idx}" aria-label="Remove module">✕</button></span>`)))
-      .join('');
-  const moduleButtons = (await Promise.all(opts.modules.map((m) =>
-      optRow(m, 'pick-module',
-             rowConfig.list.length === 1 && rowConfig.list[0].tdn === m.tdn &&
-             rowConfig.list[0].count === 0,
-             [m.speed ? `spd${m.speed > 0 ? '+' : ''}${Math.round(m.speed * 100)}%` : '',
-              m.productivity ? `prod+${Math.round(m.productivity * 100)}%` : '',
-              m.consumption ? `enrg${m.consumption > 0 ? '+' : ''}${Math.round(m.consumption * 100)}%` : '']
-              .filter(Boolean).join(' '))))).join('');
+  // Live effects preview mirroring the C++ ApplyModules math: entries in
+  // order, count 0 takes all remaining slots; beacons apply efficiency x
+  // profile(ceil(total/slots)).
+  const selectedBeacon = opts.beacons.find((b) => b.tdn === rowConfig.beacon);
+  const beaconTotal = rowConfig.beaconList.reduce((sum, e) => sum + e.count, 0);
+  const beaconCount = selectedBeacon && beaconTotal > 0
+      ? Math.ceil(beaconTotal / (selectedBeacon.moduleSlots || 1)) : 0;
+  const preview = (() => {
+    const specs = new Map(opts.modules.map((m) => [m.tdn, m]));
+    const eff = { speed: 0, productivity: 0, consumption: 0 };
+    let remaining = opts.moduleSlots;
+    for (const e of rowConfig.list) {
+      const spec = specs.get(e.tdn);
+      if (!spec || remaining <= 0) continue;
+      const count = e.count === 0 ? remaining : Math.min(e.count, remaining);
+      remaining -= count;
+      eff.speed += (spec.speed || 0) * count;
+      eff.productivity += (spec.productivity || 0) * count;
+      eff.consumption += (spec.consumption || 0) * count;
+    }
+    if (selectedBeacon && beaconCount > 0) {
+      const profile = selectedBeacon.profile?.length
+          ? selectedBeacon.profile[Math.min(beaconCount - 1, selectedBeacon.profile.length - 1)]
+          : 1;
+      const strength = selectedBeacon.efficiency * profile;
+      for (const e of rowConfig.beaconList) {
+        const spec = selectedBeacon.modules.find((m) => m.tdn === e.tdn);
+        if (!spec) continue;
+        eff.speed += (spec.speed || 0) * strength * e.count;
+        eff.consumption += (spec.consumption || 0) * strength * e.count;
+        if ((spec.productivity || 0) > 0) {
+          eff.productivity += spec.productivity * strength * e.count;
+        }
+      }
+    }
+    return { ...eff, remaining: Math.max(0, remaining) };
+  })();
+  const pct = (x) => `${x > 0 ? '+' : ''}${Math.round(x * 100)}%`;
+  const previewLine = `speed ${pct(preview.speed)} · productivity ${pct(preview.productivity)}` +
+      ` · energy ${pct(preview.consumption)}` +
+      (rowConfig.list.some((e) => e.count === 0)
+          ? '' : ` · ${preview.remaining} slot${preview.remaining === 1 ? '' : 's'} free`);
 
+  const specMeta = (m) =>
+      [m.speed ? `spd${pct(m.speed)}` : '',
+       m.productivity ? `prod${pct(m.productivity)}` : '',
+       m.consumption ? `enrg${pct(m.consumption)}` : '']
+      .filter(Boolean).join(' ');
+
+  // Template entries: count editable in place (0 = fill remaining slots).
+  const entryRows = async (entries, kind) => (await Promise.all(entries.map(async (e, i) =>
+      `<div class="row modentry">${await iconImg(e.tdn)}
+         <span>${esc(e.locName ?? short(e.tdn))}</span>
+         <input type="number" min="0" step="1" value="${e.count}" data-${kind}-count="${i}"
+                aria-label="Module count">
+         <span class="muted">${e.count === 0 && kind === 'mod' ? 'fills remaining' : ''}</span>
+         <button class="x" data-${kind}-x="${i}" aria-label="Remove">✕</button>
+       </div>`))).join('');
+
+  const modulePalette = (await Promise.all(opts.modules.map((m) =>
+      optRow(m, 'add-module', false, specMeta(m))))).join('');
   const beacons = (await Promise.all(opts.beacons.map((b) =>
       optRow(b, 'pick-beacon', b.tdn === rowConfig.beacon,
-             `${b.moduleSlots} slots · eff ${b.efficiency}`)))).join('');
-  const selectedBeacon = opts.beacons.find((b) => b.tdn === rowConfig.beacon);
-  const beaconModuleButtons = selectedBeacon
+             `${b.moduleSlots} slots · eff ${(+b.efficiency.toFixed(2))}`)))).join('');
+  const beaconModulePalette = selectedBeacon
       ? (await Promise.all(selectedBeacon.modules.map((m) =>
-          optRow(m, 'pick-beacon-module',
-                 rowConfig.beaconList.length > 0 && rowConfig.beaconList[0].tdn === m.tdn,
-                 '')))).join('')
+          optRow(m, 'add-beacon-module', false, specMeta(m))))).join('')
       : '';
-  const beaconTotal = rowConfig.beaconList[0]?.count ?? 0;
 
   $('#rowDialogBody').innerHTML = `
     <div class="eyebrow">Building</div><div class="opts">${crafters}</div>
     ${opts.hasEnergy && opts.fuels.length ? `<div class="eyebrow">Fuel</div><div class="opts">${fuels}</div>` : ''}
-    ${opts.moduleSlots > 0 ? `
+    ${opts.moduleSlots > 0 || rowConfig.list.length ? `
       <div class="eyebrow">Modules — ${opts.moduleSlots} slots</div>
-      ${rowConfig.list.length ? `<div class="chips">${chips}</div>` : ''}
-      <div class="opts">
-        <div style="display:flex;align-items:center"><span class="fav"></span>
-          <button class="opt${rowConfig.list.length === 0 ? ' sel' : ''}" data-pick-module="">
-          <span style="width:22px"></span><span>No modules</span></button></div>
-        ${moduleButtons}</div>` : ''}
+      ${rowConfig.list.length
+          ? await entryRows(rowConfig.list, 'mod')
+          : '<div class="muted" style="padding:2px 6px">No modules — pick from the list to add.</div>'}
+      <div class="opts">${modulePalette}</div>` : ''}
     ${opts.beacons.length ? `
       <div class="eyebrow">Beacons</div>
       <div class="opts">
@@ -907,11 +947,15 @@ async function renderRowConfig() {
           <span style="width:22px"></span><span>No beacons</span></button></div>
         ${beacons}</div>
       ${selectedBeacon ? `
-        <div class="opts">${beaconModuleButtons}</div>
-        <label class="row">Total beacon modules
-          <input type="number" id="beaconTotal" min="0" step="1" value="${beaconTotal}">
-          <span class="muted">= ${Math.ceil(beaconTotal / (selectedBeacon.moduleSlots || 1))} beacons</span>
-        </label>` : ''}` : ''}`;
+        ${rowConfig.beaconList.length
+            ? await entryRows(rowConfig.beaconList, 'bmod') +
+              `<div class="muted" style="padding:0 6px">counts are totals across all beacons` +
+              ` — ${beaconTotal} modules = ${beaconCount} beacon${beaconCount === 1 ? '' : 's'}</div>`
+            : '<div class="muted" style="padding:2px 6px">Pick a beacon module:</div>'}
+        <div class="opts">${beaconModulePalette}</div>` : ''}` : ''}
+    ${opts.moduleSlots > 0 || selectedBeacon ? `
+      <div class="eyebrow">Net effects</div>
+      <div class="mono" style="font-size:12.5px;padding:0 6px">${previewLine}</div>` : ''}`;
 
   const body = $('#rowDialogBody');
   for (const btn of body.querySelectorAll('[data-fav]')) {
@@ -932,37 +976,53 @@ async function renderRowConfig() {
   for (const btn of body.querySelectorAll('[data-pick-fuel]')) {
     btn.onclick = () => { rowConfig.fuel = btn.dataset.pickFuel; renderRowConfig(); };
   }
-  for (const btn of body.querySelectorAll('[data-pick-module]')) {
+  // Palette click appends an entry (first entry defaults to fill-remaining);
+  // clicking a module already in the template bumps its fixed count instead.
+  const addEntry = (entries, tdn, locName, defaultCount) => {
+    const existing = entries.find((e) => e.tdn === tdn);
+    if (existing) {
+      if (existing.count > 0) existing.count += 1;
+    } else {
+      entries.push({ tdn, locName, count: defaultCount });
+    }
+    renderRowConfig();
+  };
+  for (const btn of body.querySelectorAll('[data-add-module]')) {
     btn.onclick = () => {
-      // One module type filling all slots (count 0 = fill remaining).
-      rowConfig.list = btn.dataset.pickModule
-          ? [{ tdn: btn.dataset.pickModule, count: 0 }] : [];
-      renderRowConfig();
+      const m = opts.modules.find((x) => x.tdn === btn.dataset.addModule);
+      addEntry(rowConfig.list, m.tdn, m.locName, rowConfig.list.length === 0 ? 0 : 1);
     };
   }
-  for (const btn of body.querySelectorAll('[data-mod-x]')) {
-    btn.onclick = () => { rowConfig.list.splice(+btn.dataset.modX, 1); renderRowConfig(); };
+  for (const btn of body.querySelectorAll('[data-add-beacon-module]')) {
+    btn.onclick = () => {
+      const m = selectedBeacon.modules.find((x) => x.tdn === btn.dataset.addBeaconModule);
+      addEntry(rowConfig.beaconList, m.tdn, m.locName,
+               selectedBeacon.moduleSlots || 1);
+    };
   }
+  const wireEntries = (kind, entries) => {
+    for (const input of body.querySelectorAll(`[data-${kind}-count]`)) {
+      input.onchange = () => {
+        const i = +input.dataset[kind === 'mod' ? 'modCount' : 'bmodCount'];
+        entries[i].count = Math.max(0, Math.round(+input.value || 0));
+        renderRowConfig();
+      };
+    }
+    for (const btn of body.querySelectorAll(`[data-${kind}-x]`)) {
+      btn.onclick = () => {
+        const i = +btn.dataset[kind === 'mod' ? 'modX' : 'bmodX'];
+        entries.splice(i, 1);
+        renderRowConfig();
+      };
+    }
+  };
+  wireEntries('mod', rowConfig.list);
+  wireEntries('bmod', rowConfig.beaconList);
   for (const btn of body.querySelectorAll('[data-pick-beacon]')) {
     btn.onclick = () => {
       rowConfig.beacon = btn.dataset.pickBeacon;
       if (!rowConfig.beacon) rowConfig.beaconList = [];
       renderRowConfig();
-    };
-  }
-  for (const btn of body.querySelectorAll('[data-pick-beacon-module]')) {
-    btn.onclick = () => {
-      const count = rowConfig.beaconList[0]?.count ||
-          (selectedBeacon ? selectedBeacon.moduleSlots : 2);
-      rowConfig.beaconList = [{ tdn: btn.dataset.pickBeaconModule, count }];
-      renderRowConfig();
-    };
-  }
-  const total = $('#beaconTotal');
-  if (total) {
-    total.onchange = () => {
-      const count = Math.max(0, Math.round(+total.value || 0));
-      if (rowConfig.beaconList[0]) rowConfig.beaconList[0].count = count;
     };
   }
 }

@@ -383,11 +383,15 @@ static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
     json beaconModules = json::array();
     for (Module* m : Db().allModules) {
       if (b->CanAcceptModule(m->moduleSpecification)) {
-        beaconModules.push_back(brief(m));
+        const ModuleSpecification& spec = m->moduleSpecification;
+        beaconModules.push_back(brief(m, json{{"speed", spec.baseSpeed},
+                                              {"productivity", spec.baseProductivity},
+                                              {"consumption", spec.baseConsumption}}));
       }
     }
     beacons.push_back(brief(b, json{{"moduleSlots", b->moduleSlots},
                                     {"efficiency", b->beaconEfficiency},
+                                    {"profile", b->profileValues},
                                     {"modules", std::move(beaconModules)}}));
   }
 
