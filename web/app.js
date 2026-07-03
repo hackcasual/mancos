@@ -1282,6 +1282,24 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('[data-add], #goalBtn')) closeSheet();
 });
 
+// ---- app mode: installable + offline via the service worker ----
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => { /* http dev */ });
+}
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $('#installBtn').hidden = false;
+});
+$('#installBtn').onclick = async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  $('#installBtn').hidden = true;
+};
+
 initPacks();
 $('#clearBtn').onclick = () => {
   pages[activePage] = newPage(pages[activePage].name);
