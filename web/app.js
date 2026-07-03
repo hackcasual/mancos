@@ -417,15 +417,26 @@ $('#exportBtn').onclick = async () => {
 };
 $('#importBtn').onclick = () => $('#projectFile').click();
 $('#projectFile').onchange = (e) => {
-  const file = e.target.files[0];
+  const input = e.target;
+  const file = input.files[0];
   if (!file) return;
-  // FileReader instead of file.text(): some mounts/browsers abort the
-  // Promise-based read; this path surfaces real errors in the status line.
+  // FileReader with the input reset only AFTER the read settles: clearing
+  // input.value while a read is in flight invalidates the File in Firefox
+  // (NotFoundError). Reads can still fail on exotic mounts (sandboxed
+  // shared folders) — offer paste as the escape hatch.
   const reader = new FileReader();
-  reader.onerror = () => status(`could not read ${file.name}: ${reader.error?.message}`);
-  reader.onload = () => importProjectText(reader.result);
+  reader.onerror = () => {
+    input.value = '';
+    status(`could not read ${file.name}: ${reader.error?.message} — ` +
+           `try copying it to a local folder, or paste it`);
+    const text = prompt('Paste the project file contents instead:');
+    if (text) importProjectText(text);
+  };
+  reader.onload = () => {
+    input.value = '';
+    importProjectText(reader.result);
+  };
   reader.readAsText(file);
-  e.target.value = '';
 };
 
 async function loadProjectFromUrl() {
