@@ -51,6 +51,9 @@ if(EMSCRIPTEN AND YAFC_WEB)
   target_link_options(yafc_web PRIVATE
     --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcModule
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152
+    # Resizable ArrayBuffers (default-on) break Firefox's TextDecoder on any
+    # string crossing embind; use classic detach-on-grow memory instead.
+    -sGROWABLE_ARRAYBUFFERS=0
     -sEXPORTED_FUNCTIONS=_malloc,_free
     -sEXPORTED_RUNTIME_METHODS=HEAPU8
     -sENVIRONMENT=web,worker,node)
