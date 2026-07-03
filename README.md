@@ -12,7 +12,7 @@ writes desktop YAFC `.yafc` project files.
 
 Mancos is split in two so the app never touches game files:
 
-- **Bundler** (`bundler.html`, or the `yafc_bundler` CLI): runs the full Lua
+- **Bundler** (`bundler.html`, or the `mancos_bundler` CLI): runs the full Lua
   data stage against *your* copy of Factorio + mods, entirely client-side, and
   emits a single `.yafcbundle` (database, analyses, icons, locales). Game
   assets stay on your machine.

@@ -15,5 +15,5 @@ if (args.length === 3 && !args.some((a) => a === '-h' || a === '--help')) {
   args.splice(2, 0, join(here, 'env'));  // insert the packaged env dir
 }
 const result = spawnSync(process.execPath,
-    [join(here, 'yafc_bundler_node.js'), ...args], { stdio: 'inherit' });
+    [join(here, 'mancos_bundler_node.js'), ...args], { stdio: 'inherit' });
 process.exit(result.status ?? 1);

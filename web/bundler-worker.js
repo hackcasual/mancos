@@ -8,9 +8,9 @@
 // Protocol: {method:'run', dataHandle, modsHandle} in. Out, unsolicited as
 // they happen: {progress} messages, then exactly one of {result} | {error}.
 // On success, result.bundle is a transferred ArrayBuffer of the .yafcbundle.
-import createYafcBundlerModule from './yafc_bundler_web.js';
+import createMancosBundlerModule from './mancos_bundler_web.js';
 
-const modulePromise = createYafcBundlerModule();
+const modulePromise = createMancosBundlerModule();
 
 // Walks a picked directory into a flat array of File objects whose .name is
 // the path relative to the directory root — WORKERFS builds its tree from

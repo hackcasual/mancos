@@ -27,13 +27,13 @@ jobs:
         run: |
           source third_party/emsdk/emsdk_env.sh
           emcmake cmake -S . -B build/wasm -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/wasm --target yafc_bundler_node -j"$(nproc)"
+          cmake --build build/wasm --target mancos_bundler_node -j"$(nproc)"
 
       - name: Package
         run: |
           pkg=mancos-bundler-${GITHUB_REF_NAME:-dev}
           mkdir -p "$pkg"
-          cp build/wasm/yafc_bundler_node.js build/wasm/yafc_bundler_node.wasm "$pkg/"
+          cp build/wasm/mancos_bundler_node.js build/wasm/mancos_bundler_node.wasm "$pkg/"
           cp scripts/release/mancos-bundler.mjs "$pkg/"
           cp scripts/release/BUNDLER-README.md "$pkg/README.md"
           cp LICENSE licenses.txt "$pkg/"

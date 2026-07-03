@@ -8,11 +8,11 @@ source "$ROOT/third_party/emsdk/emsdk_env.sh" >/dev/null 2>&1
 
 emcmake cmake -S "$ROOT" -B "$ROOT/build/web" -DCMAKE_BUILD_TYPE=Release \
   -DYAFC_WEB=ON -DBUILD_TESTING=OFF
-cmake --build "$ROOT/build/web" --target yafc_web yafc_bundler_web -j"$(nproc)"
+cmake --build "$ROOT/build/web" --target mancos_web mancos_bundler_web -j"$(nproc)"
 
 mkdir -p "$ROOT/web/dist"
-cp "$ROOT/build/web/yafc_web.js" "$ROOT/build/web/yafc_web.wasm" "$ROOT/web/dist/"
-cp "$ROOT/build/web/yafc_bundler_web.js" "$ROOT/build/web/yafc_bundler_web.wasm" "$ROOT/web/dist/"
+cp "$ROOT/build/web/mancos_web.js" "$ROOT/build/web/mancos_web.wasm" "$ROOT/web/dist/"
+cp "$ROOT/build/web/mancos_bundler_web.js" "$ROOT/build/web/mancos_bundler_web.wasm" "$ROOT/web/dist/"
 cp "$ROOT/web/index.html" "$ROOT/web/app.js" "$ROOT/web/worker.js" "$ROOT/web/dist/"
 cp "$ROOT/web/bundler.html" "$ROOT/web/bundler.js" "$ROOT/web/bundler-worker.js" "$ROOT/web/dist/"
 

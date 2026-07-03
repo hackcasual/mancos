@@ -20,7 +20,7 @@ namespace {
 
 void PrintHelp(const char* program) {
   std::printf(
-      "yafc-bundler — builds a Mancos .yafcbundle from Factorio game files\n"
+      "mancos-bundler — builds a Mancos .yafcbundle from Factorio game files\n"
       "\n"
       "usage: %s <factorio-data-path> <mods-path|vanilla> <env-lua-path> "
       "<out.yafcbundle>\n"

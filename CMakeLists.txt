@@ -58,12 +58,12 @@ add_subdirectory(src)
 # use; under emscripten the same main() builds as a node-runnable wasm CLI
 # (NODERAWFS reads the real filesystem) — the release artifact.
 if(NOT EMSCRIPTEN)
-  add_executable(yafc_bundler src/tools/bundler_main.cc)
-  target_link_libraries(yafc_bundler PRIVATE yafc_core)
+  add_executable(mancos_bundler src/tools/bundler_main.cc)
+  target_link_libraries(mancos_bundler PRIVATE yafc_core)
 else()
-  add_executable(yafc_bundler_node src/tools/bundler_main.cc)
-  target_link_libraries(yafc_bundler_node PRIVATE yafc_core)
-  target_link_options(yafc_bundler_node PRIVATE
+  add_executable(mancos_bundler_node src/tools/bundler_main.cc)
+  target_link_libraries(mancos_bundler_node PRIVATE yafc_core)
+  target_link_options(mancos_bundler_node PRIVATE
     -sNODERAWFS=1 -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1
     -sSTACK_SIZE=2097152)
 endif()
@@ -71,10 +71,10 @@ endif()
 # The web module: the wasm core of the main app (built by scripts/build-web.sh).
 option(YAFC_WEB "Build the web (embind) module" OFF)
 if(EMSCRIPTEN AND YAFC_WEB)
-  add_executable(yafc_web src/web/web_api.cc)
-  target_link_libraries(yafc_web PRIVATE yafc_core miniz)
-  target_link_options(yafc_web PRIVATE
-    --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcModule
+  add_executable(mancos_web src/web/web_api.cc)
+  target_link_libraries(mancos_web PRIVATE yafc_core miniz)
+  target_link_options(mancos_web PRIVATE
+    --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createMancosModule
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152
     # Resizable ArrayBuffers (default-on) break Firefox's TextDecoder on any
     # string crossing embind; use classic detach-on-grow memory instead.
@@ -88,16 +88,16 @@ if(EMSCRIPTEN AND YAFC_WEB)
     -sEXPORTED_RUNTIME_METHODS=HEAPU8
     -sENVIRONMENT=web,worker,node)
 
-  # The bundler's wasm core: same pipeline as yafc_bundler (CLI), exposed to
+  # The bundler's wasm core: same pipeline as mancos_bundler (CLI), exposed to
   # the browser bundler page (web/bundler.html) via WORKERFS-mounted
   # directories instead of real paths (split-app contract, PLAN Phase 4.5).
   # Runs worker-only: WORKERFS requires ENVIRONMENT_MAY_BE_WORKER, and the
   # page never runs the core on the main thread (threading directive).
-  add_executable(yafc_bundler_web src/web/bundler_web_api.cc)
-  target_link_libraries(yafc_bundler_web PRIVATE yafc_core)
+  add_executable(mancos_bundler_web src/web/bundler_web_api.cc)
+  target_link_libraries(mancos_bundler_web PRIVATE yafc_core)
   set(YAFC_ENV_DATA_DIR "${CMAKE_SOURCE_DIR}/third_party/yafc-ce/Yafc/Data")
-  target_link_options(yafc_bundler_web PRIVATE
-    --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcBundlerModule
+  target_link_options(mancos_bundler_web PRIVATE
+    --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createMancosBundlerModule
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152
     -sGROWABLE_ARRAYBUFFERS=0
     # NOTE: stay on legacy wasm EH ('try') for now — engines reject modules

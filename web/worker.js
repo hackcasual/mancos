@@ -1,9 +1,9 @@
 // Dedicated worker hosting the wasm core (threading directive: the core never
 // runs on the main thread). Message protocol: {id, method, args} in,
 // {id, result} | {id, error} out. iconFile returns a transferred ArrayBuffer.
-import createYafcModule from './yafc_web.js';
+import createMancosModule from './mancos_web.js';
 
-const modulePromise = createYafcModule();
+const modulePromise = createMancosModule();
 
 self.onmessage = async (event) => {
   const { id, method, args } = event.data;
