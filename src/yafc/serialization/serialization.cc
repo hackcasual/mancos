@@ -263,6 +263,7 @@ void VisitRow(RecipeRow& row, V& v) {
   v.Prop("fixedBuildings", row.fixedBuildings);
   v.Prop("builtBuildings", row.builtBuildings);
   v.Prop("enabled", row.enabled);
+  v.Prop("variants", row.variants);
   auto visitTemplate = [](ModuleTemplate& t, auto& vv) { VisitModuleTemplate(t, vv); };
   if constexpr (V::kReading) {
     if (v.Has("modules")) v.PropObject("modules", row.modules, visitTemplate);

@@ -258,7 +258,7 @@ Recipe + status: `solver-wasm/README.md`.
    tableAddRecipe(tdn, fixed, entityTdn, fuelTdn) — a reactor burning mox vs uranium
    cells is a different chain; user's 53-page project: every page solves.
    Not ported yet: custom milestone sets ("Edit milestones" editor), tech progression
-   settings dialog; temperature-variant fluid links (steam@250) can stay unmatched.
+   settings dialog. Temperature-variant fluid links (steam@250) fixed in Increment 11.
    Increment 5 (2026-07-03): modules & beacons + row config (directive): ModuleTemplate/
    GetModulesInfo port in recipe_parameters (slot fill with fixedCount-0 = fill-remaining,
    entity+recipe CanAcceptModule filtering, beaconList totals -> ceil(total/slots) beacons,
@@ -307,6 +307,54 @@ Recipe + status: `solver-wasm/README.md`.
    NO consumer still reports unmatched (desktop parity) — pure surpluses should stay
    unlinked. Full PUREX auto-closure needs consumer-pull (washing loops recycle
    upward), queued with the dependency-explorer work.
+   Increment 9 (2026-07-03): shared links now carry pack + milestones (user request), not
+   just the raw .yafc project text. Share envelope is `{pack, milestones, project}`
+   (pack = manifest id of the loaded bundle, null for a locally-loaded file) deflated+
+   base64url as before; `initPacks()` decodes the link's pack id before the chooser
+   renders and auto-fetches that pack instead of falling back to `mancos:lastPack`/manual
+   click, and `loadProjectFromUrl()` applies the link's milestone set via `setMilestones`
+   in place of the normal localStorage-restore-or-open-the-dialog first-load path. Legacy
+   links (raw text, no envelope) still decode fine — `parseSharedPayload` falls back to
+   treating non-JSON/no-`.project` payloads as the old format. Verified end-to-end with a
+   CDP-driven headless Chromium smoke test (no chromium-cli/puppeteer installed in this
+   sandbox — drove `~/.cache/puppeteer/chrome` directly over the DevTools Protocol via
+   node's built-in `fetch`+`WebSocket`, clicking through the real UI since app.js is an ES
+   module and its top-level bindings aren't reachable from `Runtime.evaluate`): fresh
+   profile -> load pack -> set a demand + row + milestone -> Share (clipboard) -> clear
+   storage -> open the captured link -> pack auto-loads, goal/row/milestones reappear,
+   milestones dialog does not re-prompt.
+   Increment 10 (2026-07-03): search results now sort milestone-reachable goods before
+   locked ones (user request) — `GoodsRank` (mirrors the existing `RecipeRank` tiering)
+   added to `searchGoods`; also fixed a latent truncate-then-never-sort bug in the same
+   function (it used to stop scanning the database the instant the prefix-match bucket
+   hit `limit`, so anything past that point in raw id order never got a chance regardless
+   of relevance — now it collects every match, sorts, then truncates).
+   Increment 11 (2026-07-03): fixed temperature-variant fluid links (user bug report:
+   "silver plate from soot" only matched coke-oven-gas at exactly 100°, not the 250°/500°
+   producers that should also satisfy a ">=100°" ingredient). Root cause was a porting
+   gap, not a data/parser bug: the parser's temperature bucketing (`UpdateRecipeIngredientFluids`,
+   already correct, matches upstream) always defaults `Ingredient::goods` to the coldest
+   qualifying variant and lists the rest in `Ingredient::variants`, but nothing in the
+   C++ port let a row bind to any variant OTHER than that default — upstream's
+   `RecipeRow.variants`/`GetVariant` selection mechanism was never carried over (an
+   already-noted PLAN gap). Ported: `RecipeRow::variants` (vector<Goods*>, matches
+   `Ingredient::variants`'s type so it reuses the existing ref-list JSON Prop() overload
+   for .yafc round-trip unchanged) + `RecipeRow::ResolveIngredient()` (upstream
+   GetVariant: first pinned option present in `ingredient.variants`, else the parser's
+   default), threaded into both `ProductionTable::Solve()`'s solver-ingredient resolution
+   and `AddFlow`'s consumption summation — the two places that previously read
+   `ingredient.goods` unconditionally. Web API: `tableAddRecipe` config gains a
+   `"variants": [tdn,...]` field; `RecipeBrief`'s ingredient entries gain a `"variants"`
+   list when more than one qualifying option exists (what a picker UI would enumerate);
+   `tableSolve` row flows now report the resolved variant's tdn. Verified against the
+   real Pyanodon coke-oven-gas chain (3 temperature variants, `Recipe.quench-ovengas`
+   consumer): default still resolves to @100 (unchanged behavior), pinning `variants:
+   ["Fluid.coke-oven-gas@500"]` makes the row consume @500 and a link to a @500 producer
+   now actually solves and matches (previously impossible at any pin, since there was no
+   pin). Native test suite green. Not yet done: no UI variant-picker in app.js (the
+   mechanism is API-complete but nothing in the row-config dialog exposes it yet) and no
+   equivalent variant selection for fuel temperature (row.fuel is chosen directly from
+   entity->energy.fuels, a different mechanism, out of scope for this fix).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

@@ -117,6 +117,7 @@ let goals = pages[0].goals;   // {tdn, name, perMin}
 let linked = pages[0].linked; // tdn[]
 let rows = pages[0].rows;     // {tdn}
 let bundleKey = null;
+let currentPackId = null;  // manifest pack id of the loaded bundle, or null for a local file
 
 function newPage(name) {
   return { name, goals: [], linked: [], rows: [], linkAlgos: {} };
@@ -618,7 +619,15 @@ async function importProjectText(text) {
 $('#shareBtn').onclick = async () => {
   persist();
   const text = await rpc('projectSaveRaw', JSON.stringify(pages));
-  const encoded = await deflateBase64Url(text);
+  // Envelope carries which hosted pack to auto-load and the milestone set,
+  // so opening the link on a fresh browser reproduces the table without
+  // manual pack-picking or re-clicking through the milestones dialog.
+  const envelope = JSON.stringify({
+    pack: currentPackId,
+    milestones: milestones.filter((m) => m.unlocked).map((m) => m.tdn),
+    project: text,
+  });
+  const encoded = await deflateBase64Url(envelope);
   // Fragment, not query: never sent to the server, so no URL-length limits
   // (or log leakage) apply; the link doubles as a bookmark of the table.
   const url = `${location.origin}${location.pathname}#p=${encoded}`;
@@ -667,17 +676,45 @@ function sharedPayloadFromUrl() {
   return new URLSearchParams(location.search).get('p');
 }
 
-async function loadProjectFromUrl() {
+// {pack, milestones, project} envelope, or null if there's no shared link.
+// Older links held the raw .yafc project text with no envelope — those
+// still load, just without pack auto-select or milestone restore.
+async function parseSharedPayload() {
   const encoded = sharedPayloadFromUrl();
-  if (!encoded) return false;
+  if (!encoded) return null;
+  const decoded = await inflateBase64Url(encoded);
   try {
-    await importProjectText(await inflateBase64Url(encoded));
-    status('shared project loaded');
-    return true;
+    const parsed = JSON.parse(decoded);
+    if (parsed && typeof parsed === 'object' && typeof parsed.project === 'string') {
+      return parsed;
+    }
+  } catch { /* not an envelope -> legacy raw project text */ }
+  return { pack: null, milestones: null, project: decoded };
+}
+
+// Returns {ok, milestonesApplied} so the caller can skip its own
+// milestones-restore step when the link already set them.
+async function loadProjectFromUrl() {
+  let shared;
+  try {
+    shared = await parseSharedPayload();
   } catch (error) {
     status(`shared project failed: ${error.message}`);
-    return false;
+    return { ok: false, milestonesApplied: false };
   }
+  if (!shared) return { ok: false, milestonesApplied: false };
+  await importProjectText(shared.project);
+  let milestonesApplied = false;
+  if (Array.isArray(shared.milestones)) {
+    milestones = await rpc('setMilestones', JSON.stringify({ unlocked: shared.milestones }));
+    renderMilestonesSummary();
+    if (bundleKey) {
+      localStorage.setItem(bundleKey + ':milestones', JSON.stringify(shared.milestones));
+    }
+    milestonesApplied = true;
+  }
+  status('shared project loaded');
+  return { ok: true, milestonesApplied };
 }
 
 // Fragment-only navigation does not reload the page: pasting a different
@@ -1146,7 +1183,15 @@ async function initPacks() {
   }
   if (!manifest?.packs?.length) return;
 
-  const last = localStorage.getItem('mancos:lastPack');
+  // A shared link names the pack it was built with (human priority: opening
+  // a link should never require guessing which pack to click) — it wins
+  // over the last-used pack so a link always reproduces on a fresh browser.
+  let shared = null;
+  try {
+    shared = await parseSharedPayload();
+  } catch { /* handled again, with a visible status message, in loadProjectFromUrl */ }
+  const wanted = shared?.pack || localStorage.getItem('mancos:lastPack');
+
   const packList = manifest.packs.map((p) =>
       `<button data-pack="${p.id}" data-file="${esc(p.file)}">` +
       `${esc(p.name)} <span class="muted mono">${(p.bytes / 1e6).toFixed(0)} MB</span>` +
@@ -1158,8 +1203,13 @@ async function initPacks() {
   for (const btn of $('#dropHint').querySelectorAll('[data-pack]')) {
     btn.onclick = () => loadPack(btn.dataset.pack, btn.dataset.file);
   }
-  const defaultPack = manifest.packs.find((p) => p.id === last);
-  if (defaultPack) loadPack(defaultPack.id, defaultPack.file);
+  const defaultPack = manifest.packs.find((p) => p.id === wanted);
+  if (defaultPack) {
+    loadPack(defaultPack.id, defaultPack.file);
+  } else if (shared?.pack) {
+    status(`shared link needs pack "${shared.pack}", not available here — ` +
+           `pick a pack manually, or load a local bundle built from the same mods`);
+  }
 }
 
 async function loadPack(id, file) {
@@ -1173,6 +1223,7 @@ async function loadBundleBuffer(buffer, label, packId) {
   status(`loading ${label} (${(buffer.byteLength / 1e6).toFixed(1)} MB)…`);
   const info = await rpc('loadBundle', buffer);
   if (info.error) { status(`load failed: ${info.error}`); return; }
+  currentPackId = packId;
   if (packId) localStorage.setItem('mancos:lastPack', packId);
   status(`${info.objects} objects · ${info.recipes} recipes · factorio ${info.meta.factorioVersion}`);
   bundleKey = 'mancos:' + JSON.stringify(info.meta.mods ?? label);
@@ -1202,7 +1253,7 @@ async function loadBundleBuffer(buffer, label, packId) {
   $('#search').disabled = false;
   $('#dropHint').hidden = true;
   $('#workspace').hidden = false;
-  const fromUrl = await loadProjectFromUrl();
+  const { ok: fromUrl, milestonesApplied: sharedMilestonesApplied } = await loadProjectFromUrl();
   if (!fromUrl) {
     if (restore()) {
       rebuildAndSolve();
@@ -1223,14 +1274,17 @@ async function loadBundleBuffer(buffer, label, packId) {
   // Milestones last: the first call runs the accessibility walks in the
   // worker, so the initial solve above is never queued behind them. First
   // load of a pack opens the dialog, like desktop's new-project flow.
-  let savedMilestones = null;
-  try {
-    savedMilestones = JSON.parse(localStorage.getItem(bundleKey + ':milestones'));
-  } catch { /* treat as first visit */ }
-  milestones = await rpc('setMilestones',
-                         JSON.stringify({ unlocked: savedMilestones ?? [] }));
-  renderMilestonesSummary();
-  if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
+  // Skipped entirely when a shared link already set the milestone set above.
+  if (!sharedMilestonesApplied) {
+    let savedMilestones = null;
+    try {
+      savedMilestones = JSON.parse(localStorage.getItem(bundleKey + ':milestones'));
+    } catch { /* treat as first visit */ }
+    milestones = await rpc('setMilestones',
+                           JSON.stringify({ unlocked: savedMilestones ?? [] }));
+    renderMilestonesSummary();
+    if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
+  }
 }
 
 // ---- switch pack: close the current project, back to the chooser ----

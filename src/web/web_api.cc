@@ -98,8 +98,20 @@ json GoodsBrief(const Goods* g) {
 json RecipeBrief(const RecipeOrTechnology* r) {
   json in = json::array(), out = json::array();
   for (const Ingredient& i : r->ingredients) {
-    in.push_back(json{{"tdn", i.goods->typeDotName()}, {"name", i.goods->locName},
-                      {"amount", i.amount}});
+    json entry{{"tdn", i.goods->typeDotName()}, {"name", i.goods->locName},
+               {"amount", i.amount}};
+    // Alternate temperature/fluid variants this ingredient will also accept
+    // (e.g. a ">=100 degrees" requirement can be fed by gas at 100/250/500) —
+    // a row picks one via tableAddRecipe's "variants" config; unpinned
+    // ingredients default to the first (coldest) entry, i.e. `tdn` above.
+    if (i.variants.size() > 1) {
+      json variants = json::array();
+      for (const Goods* v : i.variants) {
+        variants.push_back(json{{"tdn", v->typeDotName()}, {"name", v->locName}});
+      }
+      entry["variants"] = std::move(variants);
+    }
+    in.push_back(std::move(entry));
   }
   for (const Product& p : r->products) {
     out.push_back(json{{"tdn", p.goods->typeDotName()}, {"name", p.goods->locName},
@@ -145,6 +157,16 @@ void SortRecipes(std::vector<const RecipeOrTechnology*>& list) {
                    });
 }
 
+// Same gating tiers as RecipeRank, minus the recipe-only availability/special
+// concepts: reachable-now < beyond-current-milestones < statically inaccessible.
+int GoodsRank(const Goods* g) {
+  if (g_milestones != nullptr) {
+    if (!g_milestones->IsAccessible(g)) return 2;
+    if (!g_milestones->IsAccessibleWithCurrentMilestones(g)) return 1;
+  }
+  return 0;
+}
+
 std::string Err(const std::string& message) {
   return json{{"error", message}}.dump();
 }
@@ -177,7 +199,11 @@ static std::string searchGoods(std::string query, int limit) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   std::transform(query.begin(), query.end(), query.begin(),
                  [](unsigned char c) { return std::tolower(c); });
-  json prefix = json::array(), contains = json::array();
+  // Gather every match first (cheap: a substring scan over goods' names),
+  // then rank so milestone-reachable goods sort first within each bucket —
+  // ranking after an early truncation-at-`limit` would just reorder whatever
+  // the database's raw id order happened to fill the quota with first.
+  std::vector<const Goods*> prefix, contains;
   for (const Goods* g : Db().goods) {
     if (!g->isLinkable || !g->showInExplorers) continue;
     // Match internal AND localized names (the UI suggests localized ones).
@@ -187,14 +213,23 @@ static std::string searchGoods(std::string query, int limit) {
     size_t pos = haystack.find(query);
     if (pos == std::string::npos) continue;
     bool atStart = pos == 0 || haystack[pos - 1] == '\x01';
-    (atStart ? prefix : contains).push_back(GoodsBrief(g));
-    if (prefix.size() >= static_cast<size_t>(limit)) break;
+    (atStart ? prefix : contains).push_back(g);
   }
-  for (json& e : contains) {
-    if (prefix.size() >= static_cast<size_t>(limit)) break;
-    prefix.push_back(std::move(e));
+  auto byMilestone = [](const Goods* a, const Goods* b) {
+    return GoodsRank(a) < GoodsRank(b);
+  };
+  std::stable_sort(prefix.begin(), prefix.end(), byMilestone);
+  std::stable_sort(contains.begin(), contains.end(), byMilestone);
+  json out = json::array();
+  for (const Goods* g : prefix) {
+    if (out.size() >= static_cast<size_t>(limit)) break;
+    out.push_back(GoodsBrief(g));
   }
-  return prefix.dump();
+  for (const Goods* g : contains) {
+    if (out.size() >= static_cast<size_t>(limit)) break;
+    out.push_back(GoodsBrief(g));
+  }
+  return out.dump();
 }
 
 static std::string goodsInfo(std::string tdn) {
@@ -259,10 +294,12 @@ json ModuleListJson(const std::vector<RecipeRowCustomModule>& list) {
 }
 
 // Row configuration: {"fixed": crafts/s, "entity": tdn, "fuel": tdn,
-// "modules": {"list": [{tdn,count}], "beacon": tdn, "beaconList": [...]}}.
-// Empty/missing fields pick defaults: favorite-or-first crafter, its
-// favorite-or-first fuel. A project's per-row choices matter: a reactor
-// burning mox vs uranium cells produces different spent fuel.
+// "modules": {"list": [{tdn,count}], "beacon": tdn, "beaconList": [...]},
+// "variants": [tdn, ...]}. Empty/missing fields pick defaults: favorite-or-
+// first crafter, its favorite-or-first fuel. A project's per-row choices
+// matter: a reactor burning mox vs uranium cells produces different spent
+// fuel; a temperature-gated ingredient bound to a colder or hotter fluid
+// variant changes which link it draws from (RecipeBrief's "in[].variants").
 static std::string tableAddRecipe(std::string tdn, std::string configJson) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* r = dynamic_cast<RecipeOrTechnology*>(Db().FindByTypeDotName(tdn));
@@ -290,6 +327,11 @@ static std::string tableAddRecipe(std::string tdn, std::string configJson) {
     row->modules.beacon = dynamic_cast<EntityBeacon*>(
         Db().FindByTypeDotName(modules.value("beacon", "")));
     row->modules.beaconList = ParseModuleList(modules.value("beaconList", json::array()));
+  }
+  for (const auto& variantTdn : config.value("variants", std::vector<std::string>())) {
+    if (Goods* g = dynamic_cast<Goods*>(Db().FindByTypeDotName(variantTdn))) {
+      row->variants.push_back(g);
+    }
   }
   return json{{"ok", true}, {"recipe", RecipeBrief(r)}}.dump();
 }
@@ -418,7 +460,7 @@ static std::string tableSolve() {
                            {"perMin", p.amount * row->recipesPerSecond}});
     }
     for (const Ingredient& i : row->recipe->ingredients) {
-      flows.push_back(json{{"tdn", i.goods->typeDotName()},
+      flows.push_back(json{{"tdn", row->ResolveIngredient(i)->typeDotName()},
                            {"perMin", -i.amount * row->recipesPerSecond}});
     }
     // Item fuels show like desktop: fuel as an ingredient, its spent form as
@@ -457,12 +499,15 @@ static std::string tableSolve() {
                         {"locName", row->parameters.usedBeacon->locName},
                         {"count", row->parameters.usedBeaconCount}};
     }
+    json pinnedVariants = json::array();
+    for (const Goods* v : row->variants) pinnedVariants.push_back(v->typeDotName());
     rows.push_back(json{{"recipe", RecipeBrief(row->recipe)},
                         {"craftsPerMin", row->recipesPerSecond},
                         {"buildings", row->buildingCount()},
                         {"entity", std::move(entity)},
                         {"modules", std::move(usedModules)},
                         {"beacon", std::move(usedBeacon)},
+                        {"variants", std::move(pinnedVariants)},
                         {"warnings", row->parameters.warningFlags},
                         {"flows", std::move(flows)}});
   }

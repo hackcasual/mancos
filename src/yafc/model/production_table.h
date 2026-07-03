@@ -77,6 +77,21 @@ class RecipeRow {
   RecipeParameters parameters;
   std::unique_ptr<ProductionTable> subgroup;  // nested table (this row is its header)
 
+  // User-pinned fluid/temperature variants (upstream RecipeRow.variants):
+  // when an ingredient has multiple qualifying variants (e.g. an ingredient
+  // requiring coke-oven-gas at >=100 degrees can be satisfied by any of the
+  // @100/@250/@500 goods), a row can pin which concrete one it actually
+  // consumes. Untouched ingredients keep the parser's default (the coldest
+  // qualifying variant, Ingredient::goods). Plain vector (matches
+  // Ingredient::variants' type) so it reuses the ref-list Prop() overload
+  // for .yafc (de)serialization as-is.
+  std::vector<Goods*> variants;
+
+  // Which concrete Goods this row actually consumes for `ingredient`: its
+  // pinned variant if one of the qualifying options was chosen, otherwise
+  // the parser's default (upstream RecipeRow.GetVariant).
+  Goods* ResolveIngredient(const Ingredient& ingredient) const;
+
   // Solve results:
   double recipesPerSecond = 0;
   float buildingCount() const {

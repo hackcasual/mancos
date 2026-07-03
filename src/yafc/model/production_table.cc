@@ -6,6 +6,15 @@
 
 namespace yafc {
 
+Goods* RecipeRow::ResolveIngredient(const Ingredient& ingredient) const {
+  for (Goods* option : ingredient.variants) {
+    if (std::find(variants.begin(), variants.end(), option) != variants.end()) {
+      return option;
+    }
+  }
+  return ingredient.goods;
+}
+
 bool RecipeRow::FindLink(const QualityGoods& goods, ProductionLink** link) const {
   // Upstream linkRoot = subgroup ?? owner: a nested table's header row
   // resolves its links against the nested table first.
@@ -141,7 +150,8 @@ TableSolveResult ProductionTable::Solve() {
       sr.products.push_back({resolve(row, product.goods), amount});
     }
     for (const Ingredient& ingredient : row->recipe->ingredients) {
-      sr.ingredients.push_back({resolve(row, ingredient.goods), ingredient.amount});
+      sr.ingredients.push_back(
+          {resolve(row, row->ResolveIngredient(ingredient)), ingredient.amount});
     }
     if (row->fuel) {
       ProductionLink* link = nullptr;
@@ -184,7 +194,7 @@ void AddFlow(const RecipeRow& row,
     prod += product.GetAmountPerRecipe(row.parameters.productivity()) * row.recipesPerSecond;
   }
   for (const Ingredient& ingredient : row.recipe->ingredients) {
-    auto& [prod, cons] = summer[{ingredient.goods, nullptr}];
+    auto& [prod, cons] = summer[{row.ResolveIngredient(ingredient), nullptr}];
     cons += ingredient.amount * row.recipesPerSecond;
   }
   if (row.fuel) {
