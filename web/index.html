@@ -142,6 +142,11 @@
   .pill.bad { border-color: var(--signal-red); }
   .pill button.x { font-size: 12px; padding: 0 4px; }
 
+  #pageTabs {
+    display: flex; gap: 4px; align-items: center; overflow-x: auto;
+    max-width: 60vw; scrollbar-width: thin; padding-bottom: 2px;
+  }
+  #pageTabs button { flex: none; }
   .pos { color: var(--signal-green); } .neg { color: var(--signal-red); }
   #flows .row { padding-left: 4px; }
   #dropHint {
