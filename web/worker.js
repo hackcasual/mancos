@@ -35,6 +35,10 @@ self.onmessage = async (event) => {
         }
         break;
       }
+      case 'projectSaveRaw': {
+        result = mod.projectSave();  // raw .yafc text, not JSON-wrapped
+        break;
+      }
       default: {
         const raw = mod[method](...args);
         result = typeof raw === 'string' ? JSON.parse(raw) : raw;

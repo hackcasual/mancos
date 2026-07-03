@@ -57,6 +57,34 @@ if(EMSCRIPTEN AND YAFC_WEB)
     -sEXPORTED_FUNCTIONS=_malloc,_free
     -sEXPORTED_RUNTIME_METHODS=HEAPU8
     -sENVIRONMENT=web,worker,node)
+
+  # The bundler's wasm core: same pipeline as yafc_bundler (CLI), exposed to
+  # the browser bundler page (web/bundler.html) via WORKERFS-mounted
+  # directories instead of real paths (split-app contract, PLAN Phase 4.5).
+  # Runs worker-only: WORKERFS requires ENVIRONMENT_MAY_BE_WORKER, and the
+  # page never runs the core on the main thread (threading directive).
+  add_executable(yafc_bundler_web src/web/bundler_web_api.cc)
+  target_link_libraries(yafc_bundler_web PRIVATE yafc_core)
+  set(YAFC_ENV_DATA_DIR "${CMAKE_SOURCE_DIR}/third_party/yafc-ce/Yafc/Data")
+  target_link_options(yafc_bundler_web PRIVATE
+    --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcBundlerModule
+    -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152
+    -sGROWABLE_ARRAYBUFFERS=0
+    -sENVIRONMENT=worker
+    -lworkerfs.js
+    "SHELL:--pre-js ${CMAKE_SOURCE_DIR}/web/bundler_pre.js"
+    # Only the Lua env files the data stage reads (envPath) — not yafc's own
+    # UI assets (Icons/Digits/fonts) which the bundler never touches.
+    # (CMake dedupes identical repeated flags in one option list, so each
+    # --embed-file must be wrapped in SHELL: to stay a distinct atomic token.)
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/Sandbox.lua@/env/Sandbox.lua"
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/Serpent.lua@/env/Serpent.lua"
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/Postprocess.lua@/env/Postprocess.lua"
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/Postprocess1.1.lua@/env/Postprocess1.1.lua"
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/Defines1.1.lua@/env/Defines1.1.lua"
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/Defines2.0.lua@/env/Defines2.0.lua"
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/Defines2.1.lua@/env/Defines2.1.lua"
+    "SHELL:--embed-file ${YAFC_ENV_DATA_DIR}/locale@/env/locale")
 endif()
 
 include(CTest)

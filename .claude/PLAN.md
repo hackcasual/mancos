@@ -1,12 +1,24 @@
 # YAFC-Web: Port yafc-ce to the browser as C++/WebAssembly
 
-# Human Priorities
+# Human Priorities (2026-07-03) — tracked
 
-1. Implement loading yafc projects
-2. Support serializing projects to base-64, and allow loading them from encoded URL query parameter (server-less)
-3. Support a manifest of bundled modpacks and allow selecting one to be loaded from the server. The last loaded pack should be stored in persistent storage and opened by default
-4. The technology picker should show technology levels based on research, and gate products based on research levels
-5. There should be a mobile phone mode, with a sensible UI, optimizing for building a production table
+1. [x] (2026-07-03) Loading yafc projects — wire the Phase 2 serialization layer into the web app:
+   projectSave/projectLoad web APIs mapping the session table <-> Project pages[0]
+   (links with amount -> goals, amount 0 -> plain links, rows -> rows); .yafc file
+   import/export buttons. Full desktop .yafc compat still gated on the remaining
+   RecipeRow fields (entity/modules/quality) per Phase 2.3.
+2. [x] (2026-07-03) Base-64 project share links (server-less) — project JSON -> deflate (miniz) ->
+   base64url in a ?p= query parameter; loading a URL with ?p= restores the table.
+   ~1-2KB tables deflate+encode to a few hundred chars.
+3. [x] (2026-07-03) Modpack manifest — web/dist/bundles/manifest.json [{id,name,file,bytes,notes}];
+   pack selector on start; last-loaded pack id in localStorage, auto-opened by default;
+   local file loading stays for user-generated bundles (split-app licensing model).
+4. [x] (2026-07-03) Technology levels — group leveled technology families (name-N and mkNN patterns)
+   in the picker as one entry with a researched-level selector; prerequisite closure
+   already implies lower levels; recipe gating by family level falls out of the
+   existing technologyUnlock ∩ researched check.
+5. [x] (2026-07-03) Mobile phone mode — single-column layout optimized for building a table:
+   catalog as a bottom sheet, large touch targets, collapsible flows/links sections.
 
 Goal: port [Yafc-CE](https://github.com/Yafc-CE/yafc-ce) (Factorio production calculator,
 C#/.NET 10 + SDL2 + Google OR-Tools + Lua 5.2.1) to run entirely client-side in a browser.

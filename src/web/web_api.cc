@@ -17,6 +17,7 @@
 
 #include "yafc/model/production_table.h"
 #include "yafc/parser/locale.h"
+#include "yafc/serialization/serialization.h"
 #include "yafc/serialization/database_dump.h"
 
 using namespace yafc;
@@ -262,6 +263,21 @@ static std::string setResearch(std::string request) {
   return json{{"filter", g_researchFilter}, {"techs", std::move(techs)}}.dump();
 }
 
+// Leveled families (human priority 4): "steel-mk03" / "physical-damage-4"
+// group under a base name with a numeric level; level 0 = no level suffix.
+static std::pair<std::string, int> TechFamily(const std::string& name) {
+  size_t dash = name.rfind('-');
+  if (dash == std::string::npos || dash + 1 >= name.size()) return {name, 0};
+  std::string tail = name.substr(dash + 1);
+  size_t digits = 0;
+  if (tail.rfind("mk", 0) == 0) digits = 2;
+  if (tail.find_first_not_of("0123456789", digits) != std::string::npos ||
+      tail.size() == digits) {
+    return {name, 0};
+  }
+  return {name.substr(0, dash), std::atoi(tail.c_str() + digits)};
+}
+
 static std::string searchTechs(std::string query, int limit) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   std::transform(query.begin(), query.end(), query.begin(),
@@ -272,14 +288,75 @@ static std::string searchTechs(std::string query, int limit) {
     std::transform(haystack.begin(), haystack.end(), haystack.begin(),
                    [](unsigned char c) { return std::tolower(c); });
     if (haystack.find(query) == std::string::npos) continue;
+    auto [family, level] = TechFamily(tech->name);
     results.push_back(json{{"tdn", tech->typeDotName()},
                            {"locName", tech->locName},
+                           {"family", family},
+                           {"level", level},
                            {"researched", g_researched.count(tech) != 0},
-                           {"unlocks", dynamic_cast<const Technology*>(tech)
-                                           ->unlockRecipes.size()}});
+                           {"unlocks", tech->unlockRecipes.size()}});
     if (results.size() >= static_cast<size_t>(limit)) break;
   }
   return results.dump();
+}
+
+// ---- projects: session table <-> Project pages[0] (human priority 1) ----
+
+static std::string projectSave() {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  Project project;
+  auto page = std::make_unique<ProjectPage>();
+  page->name = "Web table";
+  for (const auto& link : g_table->links) {
+    ProductionLink* copy = page->content.AddLink(link->goods, link->amount);
+    copy->algorithm = link->algorithm;
+  }
+  for (const auto& row : g_table->recipes) {
+    if (row->recipe == nullptr) continue;
+    RecipeRow* copy = page->content.AddRecipe(row->recipe);
+    copy->enabled = row->enabled;
+    copy->fixedBuildings = row->fixedBuildings;
+  }
+  project.pages.push_back(std::move(page));
+  return SaveProjectToString(project, /*indent=*/0);
+}
+
+// Loads a project's first page into the session table; nested subgroups are
+// flattened (the web table is flat for now). Returns the UI state mirror.
+static std::string projectLoad(std::string text) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  LoadResult loaded = LoadProjectFromString(text, Db());
+  if (loaded.project == nullptr || loaded.project->pages.empty()) {
+    return Err("not a yafc project (no pages)");
+  }
+  ProductionTable& source = loaded.project->pages[0]->content;
+  g_table = std::make_unique<ProductionTable>();
+  json goals = json::array(), linked = json::array(), rows = json::array();
+  for (const auto& link : source.links) {
+    if (link->goods.target == nullptr) continue;
+    ProductionLink* copy = g_table->AddLink(link->goods, link->amount);
+    copy->algorithm = link->algorithm;
+    if (link->amount != 0) {
+      goals.push_back(json{{"tdn", link->goods.target->typeDotName()},
+                           {"name", link->goods.target->locName},
+                           {"perMin", link->amount}});
+    } else {
+      linked.push_back(link->goods.target->typeDotName());
+    }
+  }
+  std::vector<RecipeRow*> allRows;
+  source.GetAllRecipes(allRows);
+  for (const RecipeRow* row : allRows) {
+    if (row->recipe == nullptr) continue;
+    RecipeRow* copy = g_table->AddRecipe(row->recipe);
+    copy->enabled = row->enabled;
+    copy->fixedBuildings = row->fixedBuildings;
+    rows.push_back(json{{"tdn", row->recipe->typeDotName()}});
+  }
+  json errors = json::array();
+  for (const std::string& error : loaded.errors) errors.push_back(error);
+  return json{{"goals", std::move(goals)}, {"linked", std::move(linked)},
+              {"rows", std::move(rows)}, {"errors", std::move(errors)}}.dump();
 }
 
 static std::string iconLayers(std::string tdn) {
@@ -304,6 +381,8 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableAddLink", &tableAddLink);
   emscripten::function("tableAddRecipe", &tableAddRecipe);
   emscripten::function("tableSolve", &tableSolve);
+  emscripten::function("projectSave", &projectSave);
+  emscripten::function("projectLoad", &projectLoad);
   emscripten::function("listLanguages", &listLanguages);
   emscripten::function("setLanguage", &setLanguage);
   emscripten::function("setResearch", &setResearch);

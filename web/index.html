@@ -33,10 +33,38 @@
   }
   header h1 span { color: var(--blueprint); }
   #status { color: var(--muted); font-size: 13px; font-family: var(--mono); }
-  header button { margin-left: auto; }
+  header .spacer { margin-left: auto; }
+  header #shareBtn { margin-left: auto; }
 
   main { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 47px); }
-  @media (max-width: 760px) { main { grid-template-columns: 1fr; grid-template-rows: 40% 60%; } }
+
+  /* ---- mobile mode (human priority 5): single column, catalog as a
+     bottom sheet behind a floating button, larger touch targets ---- */
+  #catalogFab { display: none; }
+  @media (max-width: 760px) {
+    header { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+    main { display: block; height: auto; }
+    #right { min-height: calc(100vh - 47px); padding: 12px; padding-bottom: 84px; }
+    #left {
+      position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 20;
+      max-height: 72vh; overflow-y: auto; border-right: 0;
+      border-top: 2px solid var(--blueprint); border-radius: 10px 10px 0 0;
+      transform: translateY(105%); transition: transform .2s ease;
+      box-shadow: 0 -8px 30px rgba(0,0,0,.5);
+    }
+    #left.open { transform: translateY(0); }
+    @media (prefers-reduced-motion: reduce) { #left { transition: none; } }
+    #catalogFab {
+      display: block; position: fixed; right: 16px; bottom: 16px; z-index: 21;
+      width: 52px; height: 52px; border-radius: 50%; font-size: 22px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.5);
+    }
+    button, .pill { min-height: 34px; }
+    button.small { padding: 6px 10px; }
+    button.x { min-height: 34px; min-width: 34px; }
+    .plate .flows { margin-left: 0; }
+    .plate .name { font-size: 15px; }
+  }
 
   /* ---- catalog (left) ---- */
   #left { border-right: 1px solid var(--panel-edge); padding: 14px; overflow-y: auto; background: var(--panel); }
@@ -130,6 +158,10 @@
   <h1>YAFC <span>WEB</span></h1>
   <span id="status">no bundle loaded</span>
   <input type="file" id="bundleFile" accept=".yafcbundle,.zip" hidden>
+  <input type="file" id="projectFile" accept=".yafc,.json" hidden>
+  <button id="shareBtn" class="small ghost" disabled>Share link</button>
+  <button id="importBtn" class="small ghost" disabled>Import</button>
+  <button id="exportBtn" class="small ghost" disabled>Export</button>
   <button id="loadBtn">Load bundle…</button>
 </header>
 <main>
@@ -174,6 +206,7 @@
     </div>
   </div>
 </main>
+<button id="catalogFab" aria-label="Open catalog">+</button>
 <script type="module" src="app.js"></script>
 </body>
 </html>

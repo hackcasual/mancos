@@ -285,6 +285,73 @@ async function showGoods(tdn) {
   };
 }
 
+// ---- projects: import/export/share (human priorities 1+2) ----
+async function deflateBase64Url(text) {
+  const stream = new Blob([text]).stream()
+      .pipeThrough(new CompressionStream('deflate-raw'));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+async function inflateBase64Url(encoded) {
+  const binary = atob(encoded.replaceAll('-', '+').replaceAll('_', '/'));
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  const stream = new Blob([bytes]).stream()
+      .pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Response(stream).text();
+}
+
+async function applyLoadedProject(state) {
+  if (state.error) { status(`project load failed: ${state.error}`); return; }
+  goals = state.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin }));
+  linked = state.linked;
+  rows = state.rows;
+  if (state.errors?.length) status(`project loaded with ${state.errors.length} warnings`);
+  await rebuildAndSolve();
+}
+
+async function importProjectText(text) {
+  applyLoadedProject(await rpc('projectLoad', text));
+}
+
+$('#shareBtn').onclick = async () => {
+  const text = await rpc('projectSaveRaw');
+  const encoded = await deflateBase64Url(text);
+  const url = `${location.origin}${location.pathname}?p=${encoded}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    status(`share link copied (${url.length} chars)`);
+  } catch {
+    prompt('Share link:', url);
+  }
+};
+$('#exportBtn').onclick = async () => {
+  const text = await rpc('projectSaveRaw');
+  const a2 = document.createElement('a');
+  a2.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  a2.download = 'factory.yafc';
+  a2.click();
+};
+$('#importBtn').onclick = () => $('#projectFile').click();
+$('#projectFile').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (file) importProjectText(await file.text());
+};
+
+async function loadProjectFromUrl() {
+  const encoded = new URLSearchParams(location.search).get('p');
+  if (!encoded) return false;
+  try {
+    await importProjectText(await inflateBase64Url(encoded));
+    status('shared project loaded');
+    return true;
+  } catch (error) {
+    status(`shared project failed: ${error.message}`);
+    return false;
+  }
+}
+
 // ---- language: browser auto-detection + selector ----
 function pickLanguage(available) {
   const saved = localStorage.getItem('yafc:lang');
@@ -346,24 +413,66 @@ $('#researchFilter').onchange = async (e) => {
 $('#techSearch').oninput = async (e) => {
   const query = e.target.value.trim();
   if (query.length < 2) { $('#techResults').innerHTML = ''; return; }
-  renderTechs(await rpc('searchTechs', query, 30));
+  renderTechs(await rpc('searchTechs', query, 60));
 };
 function renderTechs(list) {
-  $('#techResults').innerHTML = list.map((t) =>
-      `<label class="row" style="cursor:pointer">
+  // Group leveled families: one row, level buttons 0..N (0 = unresearched);
+  // researching level k implies the lower levels via prerequisite closure.
+  const families = new Map();
+  for (const t of list) {
+    if (!families.has(t.family)) families.set(t.family, []);
+    families.get(t.family).push(t);
+  }
+  const rows = [...families.values()].map((members) => {
+    members.sort((a, b) => a.level - b.level);
+    if (members.length === 1 && members[0].level === 0) {
+      const t = members[0];
+      return `<label class="row" style="cursor:pointer">
          <input type="checkbox" data-tech="${t.tdn}" ${t.researched ? 'checked' : ''}>
          <span>${esc(t.locName)}</span>
-         <span class="muted mono">${t.unlocks} recipes</span>
-       </label>`).join('') || '<div class="muted">no matches</div>';
+         <span class="muted mono">${t.unlocks}r</span></label>`;
+    }
+    const current = members.filter((m) => m.researched).at(-1);
+    const baseName = members[0].locName.replace(/\s*(\d+|[Mm][Kk]\s*\d+)$/, '');
+    const buttons = ['<button class="small' + (current ? ' ghost' : '') +
+                     `" data-level-clear="${members[0].family}">0</button>`]
+        .concat(members.map((m) =>
+        `<button class="small${m.researched && m === current ? '' : ' ghost'}"
+           data-level="${m.tdn}" data-family="${m.family}"
+           title="${esc(m.locName)}">${m.level}</button>`));
+    return `<div class="row"><span>${esc(baseName)}</span>
+        <span class="muted mono">lv</span>${buttons.join('')}</div>`;
+  });
+  $('#techResults').innerHTML = rows.join('') || '<div class="muted">no matches</div>';
+
+  const refresh = async () => {
+    await pushResearch();
+    renderTechs(await rpc('searchTechs', $('#techSearch').value.trim(), 60));
+  };
   for (const box of $('#techResults').querySelectorAll('[data-tech]')) {
-    box.onchange = async () => {
-      if (box.checked) {
-        research.techs.push(box.dataset.tech);
-      } else {
-        research.techs = research.techs.filter((t) => t !== box.dataset.tech);
-      }
-      await pushResearch();
-      renderTechs(await rpc('searchTechs', $('#techSearch').value.trim(), 30));
+    box.onchange = () => {
+      if (box.checked) research.techs.push(box.dataset.tech);
+      else research.techs = research.techs.filter((t) => t !== box.dataset.tech);
+      refresh();
+    };
+  }
+  for (const btn of $('#techResults').querySelectorAll('[data-level]')) {
+    btn.onclick = () => {
+      // Selecting level k: drop this family's techs, add the level-k tech
+      // (closure researches the lower levels).
+      research.techs = research.techs.filter((t) =>
+          t !== 'Technology.' + btn.dataset.family &&
+          !t.startsWith('Technology.' + btn.dataset.family + '-'));
+      research.techs.push(btn.dataset.level);
+      refresh();
+    };
+  }
+  for (const btn of $('#techResults').querySelectorAll('[data-level-clear]')) {
+    btn.onclick = () => {
+      research.techs = research.techs.filter((t) =>
+          t !== 'Technology.' + btn.dataset.levelClear &&
+          !t.startsWith('Technology.' + btn.dataset.levelClear + '-'));
+      refresh();
     };
   }
 }
@@ -373,11 +482,47 @@ $('#loadBtn').onclick = () => $('#bundleFile').click();
 $('#bundleFile').onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  status(`loading ${file.name} (${(file.size / 1e6).toFixed(1)} MB)…`);
-  const info = await rpc('loadBundle', await file.arrayBuffer());
+  await loadBundleBuffer(await file.arrayBuffer(), file.name, null);
+};
+
+// Server-hosted packs (human priority 3): manifest + persisted default.
+async function initPacks() {
+  let manifest = null;
+  try {
+    const response = await fetch('bundles/manifest.json');
+    if (response.ok) manifest = await response.json();
+  } catch { /* no hosted packs: file-only mode */ }
+  if (!manifest?.packs?.length) return;
+
+  const last = localStorage.getItem('yafc:lastPack');
+  const packList = manifest.packs.map((p) =>
+      `<button data-pack="${p.id}" data-file="${esc(p.file)}">` +
+      `${esc(p.name)} <span class="muted mono">${(p.bytes / 1e6).toFixed(0)} MB</span>` +
+      `</button>`).join(' ');
+  $('#dropHint').insertAdjacentHTML('afterbegin',
+      `<p><strong>Choose a modpack</strong></p><p>${packList}</p>
+       <p class="muted">or load your own bundle below</p>`);
+  for (const btn of $('#dropHint').querySelectorAll('[data-pack]')) {
+    btn.onclick = () => loadPack(btn.dataset.pack, btn.dataset.file);
+  }
+  const defaultPack = manifest.packs.find((p) => p.id === last);
+  if (defaultPack) loadPack(defaultPack.id, defaultPack.file);
+}
+
+async function loadPack(id, file) {
+  status(`fetching ${id}…`);
+  const response = await fetch(file);
+  if (!response.ok) { status(`fetch failed: ${response.status}`); return; }
+  await loadBundleBuffer(await response.arrayBuffer(), id, id);
+}
+
+async function loadBundleBuffer(buffer, label, packId) {
+  status(`loading ${label} (${(buffer.byteLength / 1e6).toFixed(1)} MB)…`);
+  const info = await rpc('loadBundle', buffer);
   if (info.error) { status(`load failed: ${info.error}`); return; }
+  if (packId) localStorage.setItem('yafc:lastPack', packId);
   status(`${info.objects} objects · ${info.recipes} recipes · factorio ${info.meta.factorioVersion}`);
-  bundleKey = 'yafc:' + JSON.stringify(info.meta.mods ?? file.name);
+  bundleKey = 'yafc:' + JSON.stringify(info.meta.mods ?? label);
   try {
     research = JSON.parse(localStorage.getItem(bundleKey + ':research')) ??
                { filter: false, techs: [] };
@@ -393,8 +538,33 @@ $('#bundleFile').onchange = async (e) => {
   $('#search').disabled = false;
   $('#dropHint').hidden = true;
   $('#workspace').hidden = false;
-  if (restore()) rebuildAndSolve(); else renderSolve({ status: 0, rows: [], links: [], flows: [] });
+  const fromUrl = await loadProjectFromUrl();
+  if (!fromUrl) {
+    if (restore()) rebuildAndSolve();
+    else renderSolve({ status: 0, rows: [], links: [], flows: [] });
+  }
+  for (const id of ['shareBtn', 'exportBtn', 'importBtn']) {
+    document.getElementById(id).disabled = false;
+  }
+}
+
+// Mobile: the catalog is a bottom sheet behind the floating button.
+$('#catalogFab').onclick = () => {
+  const open = $('#left').classList.toggle('open');
+  $('#catalogFab').textContent = open ? '✕' : '+';
+  if (open) $('#search').focus();
 };
+// Adding a row or setting a goal closes the sheet so the table is visible.
+const closeSheet = () => {
+  $('#left').classList.remove('open');
+  $('#catalogFab').textContent = '+';
+};
+document.addEventListener('click', (e) => {
+  if (window.innerWidth > 760) return;
+  if (e.target.matches('[data-add], #goalBtn')) closeSheet();
+});
+
+initPacks();
 $('#clearBtn').onclick = () => {
   goals = []; linked = []; rows = [];
   rebuildAndSolve();
