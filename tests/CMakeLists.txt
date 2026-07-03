@@ -17,6 +17,7 @@ add_executable(yafc_tests
   production_table_test.cc
   tech_science_test.cc
   serialization_test.cc
+  synthetic_bundle_test.cc
   zip_mod_test.cc
   graph_test.cc
   production_table_solver_test.cc
