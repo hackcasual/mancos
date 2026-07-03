@@ -94,6 +94,12 @@ let goals = [];   // {tdn, name, perMin}
 let linked = [];  // tdn[]
 let rows = [];    // {tdn}
 let bundleKey = null;
+let research = { filter: false, techs: [] };
+
+async function pushResearch() {
+  research = await rpc('setResearch', JSON.stringify(research));
+  if (bundleKey) localStorage.setItem(bundleKey + ':research', JSON.stringify(research));
+}
 
 function persist() {
   if (bundleKey) {
@@ -119,6 +125,8 @@ async function rebuildAndSolve() {
   for (const row of rows) await rpc('tableAddRecipe', row.tdn);
   renderSolve(await rpc('tableSolve'));
 }
+
+const cost = (c) => c > 0 ? `<span class="muted mono">\u00a4${c >= 100 ? c.toFixed(0) : c.toFixed(1)}</span>` : '';
 
 function fmt(x) {
   const abs = Math.abs(x);
@@ -216,28 +224,25 @@ async function pullCandidates(tdn, wantProducers) {
   if (!inTable(tdn)) linked.push(tdn);
   const info = await rpc('goodsInfo', tdn);
   const list = wantProducers ? info.producers : info.consumers;
-  if (list.length === 1) {
-    rows.push({ tdn: list[0].tdn });
+  // API pre-sorts: available first, then yafc cost ascending.
+  const available = list.filter((r) => r.available !== false);
+  if (available.length === 1) {
+    rows.push({ tdn: available[0].tdn });
     await rebuildAndSolve();
     return;
   }
-  // Rank: candidates touching goods already in-table first, then simpler ones.
-  const score = (r) => {
-    const side = wantProducers ? r.in : r.out;
-    return side.filter((x) => inTable(x.tdn)).length * 100 - side.length;
-  };
-  const ranked = [...list].sort((a, b) => score(b) - score(a));
   await rebuildAndSolve();
   renderRecipeList(
       `${wantProducers ? 'Produce' : 'Consume'} ${info.goods.locName} — pick a recipe`,
-      ranked);
+      list);
 }
 
 async function renderRecipeList(title, list, header = '') {
   const items = await Promise.all(list.map(async (r) =>
       `<div class="row">${await iconImg(r.tdn)}` +
       `<span title="${esc(r.tdn)}">${esc(r.locName)}</span>` +
-      `<span class="muted mono">${r.time}s</span>` +
+      `${r.available === false ? `<span title="requires: ${esc((r.unlockedBy || []).join(', '))}">\u{1F512}</span>` : ''}` +
+      `${cost(r.cost)}<span class="muted mono">${r.time}s</span>` +
       `<button class="small" data-add="${r.tdn}">+ row</button></div>` +
       `<div class="muted" style="margin-left:32px;font-size:12.5px">` +
       `${r.in.map((x) => `${x.amount} ${esc(x.name)}`).join(', ') || 'no inputs'} → ` +
@@ -280,6 +285,45 @@ async function showGoods(tdn) {
   };
 }
 
+// ---- research tab ----
+$('#tabCatalog').onclick = () => setTab(true);
+$('#tabResearch').onclick = () => setTab(false);
+function setTab(catalog) {
+  $('#catalogPanel').hidden = !catalog;
+  $('#researchPanel').hidden = catalog;
+  $('#tabCatalog').classList.toggle('ghost', !catalog);
+  $('#tabResearch').classList.toggle('ghost', catalog);
+}
+
+$('#researchFilter').onchange = async (e) => {
+  research.filter = e.target.checked;
+  await pushResearch();
+};
+$('#techSearch').oninput = async (e) => {
+  const query = e.target.value.trim();
+  if (query.length < 2) { $('#techResults').innerHTML = ''; return; }
+  renderTechs(await rpc('searchTechs', query, 30));
+};
+function renderTechs(list) {
+  $('#techResults').innerHTML = list.map((t) =>
+      `<label class="row" style="cursor:pointer">
+         <input type="checkbox" data-tech="${t.tdn}" ${t.researched ? 'checked' : ''}>
+         <span>${esc(t.locName)}</span>
+         <span class="muted mono">${t.unlocks} recipes</span>
+       </label>`).join('') || '<div class="muted">no matches</div>';
+  for (const box of $('#techResults').querySelectorAll('[data-tech]')) {
+    box.onchange = async () => {
+      if (box.checked) {
+        research.techs.push(box.dataset.tech);
+      } else {
+        research.techs = research.techs.filter((t) => t !== box.dataset.tech);
+      }
+      await pushResearch();
+      renderTechs(await rpc('searchTechs', $('#techSearch').value.trim(), 30));
+    };
+  }
+}
+
 // ---- bundle loading ----
 $('#loadBtn').onclick = () => $('#bundleFile').click();
 $('#bundleFile').onchange = async (e) => {
@@ -290,6 +334,12 @@ $('#bundleFile').onchange = async (e) => {
   if (info.error) { status(`load failed: ${info.error}`); return; }
   status(`${info.objects} objects · ${info.recipes} recipes · factorio ${info.meta.factorioVersion}`);
   bundleKey = 'yafc:' + JSON.stringify(info.meta.mods ?? file.name);
+  try {
+    research = JSON.parse(localStorage.getItem(bundleKey + ':research')) ??
+               { filter: false, techs: [] };
+  } catch { research = { filter: false, techs: [] }; }
+  await pushResearch();
+  $('#researchFilter').checked = research.filter;
   $('#search').disabled = false;
   $('#dropHint').hidden = true;
   $('#workspace').hidden = false;

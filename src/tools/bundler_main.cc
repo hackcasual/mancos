@@ -8,7 +8,10 @@
 #include <cstdio>
 #include <string>
 
+#include "yafc/analysis/automation_analysis.h"
+#include "yafc/analysis/cost_analysis.h"
 #include "yafc/parser/data_deserializer.h"
+#include "yafc/parser/locale.h"
 #include "yafc/serialization/database_dump.h"
 
 using namespace yafc;
@@ -41,6 +44,25 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "[warn] %s\n", error.c_str());
     }
 
+    std::fprintf(stderr, "[locale] applying en names\n");
+    LocaleCatalog locale =
+        LoadLocale(*parsed.modSet, parsed.modLoadOrder, "en", envPath);
+    ApplyLocale(*loaded.db, locale);
+
+    std::fprintf(stderr, "[analysis] dependencies/milestones/automation/cost\n");
+    Dependencies deps;
+    deps.Calculate(*loaded.db);
+    Milestones milestones;
+    milestones.Compute(*loaded.db, deps, {});
+    AutomationAnalysis automation;
+    automation.Compute(*loaded.db, deps, milestones);
+    CostAnalysisInput costInput;
+    costInput.access = HooksFromAnalyses(milestones, automation);
+    CostAnalysis costAnalysis(false);
+    costAnalysis.Compute(*loaded.db, costInput);
+    std::vector<float> costs(costAnalysis.cost.values().begin(),
+                             costAnalysis.cost.values().end());
+
     std::map<std::string, std::string> modVersions;
     for (const auto& [name, info] : parsed.modSet->mods) {
       modVersions[name] = info->parsedVersion.ToString3();
@@ -48,7 +70,7 @@ int main(int argc, char** argv) {
 
     BundleWriteStats stats =
         WriteBundle(outPath, *loaded.db, *parsed.modSet,
-                    parsed.factorioVersion.ToString3(), modVersions);
+                    parsed.factorioVersion.ToString3(), modVersions, &costs);
     auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0);
 
     std::printf("bundle written: %s\n", outPath.c_str());

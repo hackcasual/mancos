@@ -130,11 +130,25 @@
 </header>
 <main>
   <div id="left">
-    <div class="eyebrow">Catalog</div>
-    <input type="text" id="search" placeholder="Search goods — try lead-plate" disabled
-           aria-label="Search goods">
-    <div id="results" class="list"></div>
-    <div id="recipeInfo"></div>
+    <div class="row" style="padding:0;gap:6px">
+      <button id="tabCatalog" class="small">Catalog</button>
+      <button id="tabResearch" class="small ghost">Research</button>
+    </div>
+    <div id="catalogPanel">
+      <input type="text" id="search" placeholder="Search goods — try lead plate" disabled
+             aria-label="Search goods" style="margin-top:10px">
+      <div id="results" class="list"></div>
+      <div id="recipeInfo"></div>
+    </div>
+    <div id="researchPanel" hidden>
+      <label class="row" style="margin-top:10px">
+        <input type="checkbox" id="researchFilter">
+        <span>Only offer researched recipes</span>
+      </label>
+      <input type="text" id="techSearch" placeholder="Search technologies…"
+             aria-label="Search technologies">
+      <div id="techResults" class="list"></div>
+    </div>
   </div>
   <div id="right">
     <div id="dropHint">

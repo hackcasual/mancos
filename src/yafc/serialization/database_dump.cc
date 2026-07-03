@@ -686,7 +686,8 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
 
 BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
                              const ModSet& mods, const std::string& factorioVersion,
-                             const std::map<std::string, std::string>& modVersions) {
+                             const std::map<std::string, std::string>& modVersions,
+                             const std::vector<float>* costs) {
   BundleWriteStats stats;
   stats.objects = static_cast<size_t>(db.objects.count());
 
@@ -750,6 +751,10 @@ BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
   std::string manifestText = manifest.dump();
   add("meta.json", metaText.data(), metaText.size(), MZ_DEFAULT_COMPRESSION);
   add("database.cbor", cbor.data(), cbor.size(), MZ_DEFAULT_COMPRESSION);
+  if (costs != nullptr) {
+    std::vector<uint8_t> costsCbor = json::to_cbor(json(*costs));
+    add("costs.cbor", costsCbor.data(), costsCbor.size(), MZ_DEFAULT_COMPRESSION);
+  }
   add("icons.json", manifestText.data(), manifestText.size(), MZ_DEFAULT_COMPRESSION);
   for (const auto& [name, bytes] : iconFiles) {
     add(name.c_str(), bytes.data(), bytes.size(), MZ_NO_COMPRESSION);  // PNGs
@@ -781,6 +786,12 @@ Bundle ReadBundleFromZip(mz_zip_archive& zip) {
   bundle.db = LoadDatabase(
       json::from_cbor(std::vector<uint8_t>(cbor.begin(), cbor.end())));
   bundle.iconManifest = json::parse(readEntry("icons.json"));
+  if (mz_zip_reader_locate_file(&zip, "costs.cbor", nullptr, 0) >= 0) {
+    std::string costsBytes = readEntry("costs.cbor");
+    bundle.costs = json::from_cbor(
+        std::vector<uint8_t>(costsBytes.begin(), costsBytes.end()))
+        .get<std::vector<float>>();
+  }
 
   mz_uint count = mz_zip_reader_get_num_files(&zip);
   for (mz_uint i = 0; i < count; ++i) {

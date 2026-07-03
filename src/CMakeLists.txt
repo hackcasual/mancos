@@ -12,6 +12,7 @@ add_library(yafc_core
   yafc/parser/data_deserializer_entity.cc
   yafc/parser/data_deserializer_recipes.cc
   yafc/parser/factorio_data_source.cc
+  yafc/parser/locale.cc
   yafc/parser/lua_context.cc
   yafc/parser/property_tree.cc
   yafc/parser/zip_archive.cc

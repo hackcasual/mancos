@@ -204,8 +204,15 @@ Recipe + status: `solver-wasm/README.md`.
    tint per FactorioIconPart), nameplate-row visual identity (blueprint grid workspace,
    circuit red/green flow semantics, amber goals, tabular-mono numerics, system fonts
    only — offline-first), row removal, goal edit/remove, unlink, per-bundle localStorage
-   persistence. Next: TS types, locale catalogs in bundles (readable names), .yafc
-   project import/export, RecipeParameters for building counts.
+   persistence. Increment 3 (2026-07-03): locale .cfg parser in the bundler (`parser/locale.*`,
+   Factorio implicit-key rules with entity/product fallbacks, split-fluid temperature
+   suffixes, Mechanics verb composition) — names baked into the dump ("Lead (grade 1)");
+   analyses run at bundle time and per-object yafc costs ship as costs.cbor; candidates
+   sort available-first-then-cost (directive) with cost badges; Research tab
+   (searchTechs/setResearch APIs, transitive prerequisite closure, per-bundle persisted,
+   optional researched-only filter gating candidate availability with lock badges).
+   Next: TS types, multi-language catalogs, .yafc project import/export, RecipeParameters
+   for building counts.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

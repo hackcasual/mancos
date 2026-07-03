@@ -6,8 +6,10 @@
 // Interop style: JSON strings in/out (typed API can come with the TS layer);
 // icon PNG bytes cross as typed arrays.
 #include <algorithm>
+#include <deque>
 #include <memory>
 #include <string>
+#include <unordered_set>
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
@@ -23,8 +25,29 @@ namespace {
 
 std::unique_ptr<Bundle> g_bundle;
 std::unique_ptr<ProductionTable> g_table;
+std::unordered_set<const Technology*> g_researched;
+bool g_researchFilter = false;
 
 Database& Db() { return *g_bundle->db; }
+
+float CostOf(const FactorioObject* o) {
+  if (o == nullptr || g_bundle->costs.empty()) return 0;
+  if (o->id < 0 || o->id >= static_cast<int>(g_bundle->costs.size())) return 0;
+  return g_bundle->costs[o->id];
+}
+
+// A recipe is available when enabled from the start or unlocked by any
+// researched technology; with the research filter off, everything counts.
+bool IsAvailable(const RecipeOrTechnology* r) {
+  if (!g_researchFilter || r->enabled) return true;
+  if (auto* recipe = dynamic_cast<const Recipe*>(r)) {
+    for (const Technology* tech : recipe->technologyUnlock) {
+      if (g_researched.count(tech)) return true;
+    }
+    return recipe->technologyUnlock.empty();
+  }
+  return true;
+}
 
 json GoodsBrief(const Goods* g) {
   return json{{"tdn", g->typeDotName()}, {"name", g->name},
@@ -41,9 +64,26 @@ json RecipeBrief(const RecipeOrTechnology* r) {
     out.push_back(json{{"tdn", p.goods->typeDotName()}, {"name", p.goods->locName},
                        {"amount", p.amount}});
   }
+  json unlockedBy = json::array();
+  if (auto* recipe = dynamic_cast<const Recipe*>(r)) {
+    for (const Technology* tech : recipe->technologyUnlock) {
+      unlockedBy.push_back(tech->locName);
+    }
+  }
   return json{{"tdn", r->typeDotName()}, {"name", r->name},
               {"locName", r->locName},   {"time", r->time},
+              {"cost", CostOf(r)},       {"available", IsAvailable(r)},
+              {"unlockedBy", std::move(unlockedBy)},
               {"in", std::move(in)},     {"out", std::move(out)}};
+}
+
+// Candidate ordering (user directive): available first, then yafc cost.
+void SortRecipes(std::vector<const RecipeOrTechnology*>& list) {
+  std::stable_sort(list.begin(), list.end(),
+                   [](const RecipeOrTechnology* a, const RecipeOrTechnology* b) {
+                     if (IsAvailable(a) != IsAvailable(b)) return IsAvailable(a);
+                     return CostOf(a) < CostOf(b);
+                   });
 }
 
 std::string Err(const std::string& message) {
@@ -96,9 +136,14 @@ static std::string goodsInfo(std::string tdn) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* g = dynamic_cast<Goods*>(Db().FindByTypeDotName(tdn));
   if (g == nullptr) return Err("unknown goods " + tdn);
+  std::vector<const RecipeOrTechnology*> production(g->production.begin(),
+                                                    g->production.end());
+  std::vector<const RecipeOrTechnology*> usages(g->usages.begin(), g->usages.end());
+  SortRecipes(production);
+  SortRecipes(usages);
   json producers = json::array(), consumers = json::array();
-  for (const Recipe* r : g->production) producers.push_back(RecipeBrief(r));
-  for (const Recipe* r : g->usages) consumers.push_back(RecipeBrief(r));
+  for (const RecipeOrTechnology* r : production) producers.push_back(RecipeBrief(r));
+  for (const RecipeOrTechnology* r : usages) consumers.push_back(RecipeBrief(r));
   return json{{"goods", GoodsBrief(g)},
               {"producers", std::move(producers)},
               {"consumers", std::move(consumers)}}.dump();
@@ -162,6 +207,51 @@ static std::string tableSolve() {
               {"flows", std::move(flows)}}.dump();
 }
 
+// Research state. Input: {"filter":bool,"techs":[tdn...]}; prerequisites are
+// implied transitively. Returns the expanded set for persistence/rendering.
+static std::string setResearch(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded()) return Err("bad request");
+  g_researchFilter = parsed.value("filter", false);
+  g_researched.clear();
+  std::deque<const Technology*> queue;
+  for (const auto& tdn : parsed.value("techs", std::vector<std::string>())) {
+    if (auto* tech = dynamic_cast<Technology*>(Db().FindByTypeDotName(tdn))) {
+      queue.push_back(tech);
+    }
+  }
+  while (!queue.empty()) {
+    const Technology* tech = queue.front();
+    queue.pop_front();
+    if (!g_researched.insert(tech).second) continue;
+    for (const Technology* prereq : tech->prerequisites) queue.push_back(prereq);
+  }
+  json techs = json::array();
+  for (const Technology* tech : g_researched) techs.push_back(tech->typeDotName());
+  return json{{"filter", g_researchFilter}, {"techs", std::move(techs)}}.dump();
+}
+
+static std::string searchTechs(std::string query, int limit) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  std::transform(query.begin(), query.end(), query.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  json results = json::array();
+  for (const Technology* tech : Db().technologies) {
+    std::string haystack = tech->name + "\x01" + tech->locName;
+    std::transform(haystack.begin(), haystack.end(), haystack.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (haystack.find(query) == std::string::npos) continue;
+    results.push_back(json{{"tdn", tech->typeDotName()},
+                           {"locName", tech->locName},
+                           {"researched", g_researched.count(tech) != 0},
+                           {"unlocks", dynamic_cast<const Technology*>(tech)
+                                           ->unlockRecipes.size()}});
+    if (results.size() >= static_cast<size_t>(limit)) break;
+  }
+  return results.dump();
+}
+
 static std::string iconLayers(std::string tdn) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   if (!g_bundle->iconManifest.contains(tdn)) return "[]";
@@ -184,6 +274,8 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableAddLink", &tableAddLink);
   emscripten::function("tableAddRecipe", &tableAddRecipe);
   emscripten::function("tableSolve", &tableSolve);
+  emscripten::function("setResearch", &setResearch);
+  emscripten::function("searchTechs", &searchTechs);
   emscripten::function("iconLayers", &iconLayers);
   emscripten::function("iconFile", &iconFile);
 }
