@@ -1,5 +1,7 @@
 #include "yafc/parser/factorio_data_source.h"
 
+#include "yafc/parser/property_tree.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -434,9 +436,24 @@ ParseResult FactorioDataSource::Parse(
                         {"expansion_shaders", flag(spaceAge)},
                         {"expansion", flag(spaceAge)}});
 
-    // Empty settings table (mod-settings.dat parsing is the next chunk).
-    lua_createtable(L, 0, 0);
-    lua_setglobal(L, "settings");
+    // Settings from mod-settings.dat when present; empty table otherwise.
+    bool haveSettings = false;
+    if (!modPath_.empty()) {
+      std::string settingsBytes =
+          ReadFile((fs::path(modPath_) / "mod-settings.dat").string());
+      if (!settingsBytes.empty()) {
+        if (auto ref = ReadModSettings(settingsBytes, lua)) {
+          lua_rawgeti(L, LUA_REGISTRYINDEX, *ref);
+          lua_setglobal(L, "settings");
+          haveSettings = true;
+          report("mod settings parsed");
+        }
+      }
+    }
+    if (!haveSettings) {
+      lua_createtable(L, 0, 0);
+      lua_setglobal(L, "settings");
+    }
 
     // helpers.game_version
     lua_getglobal(L, "helpers");

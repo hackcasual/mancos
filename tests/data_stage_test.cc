@@ -95,3 +95,52 @@ TEST_CASE("energy and expression helpers match upstream") {
   // Unparsable expressions return 1 (upstream quirk).
   CHECK(LuaContext::EvaluateExpression("2 + unknown_fn(3)", vars) == doctest::Approx(1));
 }
+
+namespace {
+std::string FindModsRoot() {
+  fs::path dir = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(dir / "data/factorio/mods/mod-list.json") &&
+        fs::exists(dir / "data/factorio/data/base/info.json")) {
+      return dir.string();
+    }
+    if (!dir.has_parent_path() || dir.parent_path() == dir) break;
+    dir = dir.parent_path();
+  }
+  return {};
+}
+const std::string kModsRoot2 = FindModsRoot();
+}  // namespace
+
+TEST_CASE("FULL modded data stage (93 mods)" * doctest::skip(kModsRoot2.empty())) {
+  FactorioDataSource source(kModsRoot2 + "/data/factorio/data",
+                            kModsRoot2 + "/data/factorio/mods",
+                            kModsRoot2 + "/third_party/yafc-ce/Yafc/Data");
+  ParseResult result = source.Parse([](const std::string& step) {
+    if (step.find("data-final-fixes") != std::string::npos ||
+        step.find(".lua") == std::string::npos) {
+      std::printf("  [modded] %s\n", step.c_str());
+    }
+  });
+
+  CHECK(result.modLoadOrder.size() > 30);  // 40 enabled of 91 zips
+
+  LuaContext& lua = *result.lua;
+  LuaValue data = lua.GetGlobal("data");
+  REQUIRE(data.kind == LuaValue::Kind::Table);
+  LuaValue raw = lua.GetField(data.tableRef, "raw");
+  REQUIRE(raw.kind == LuaValue::Kind::Table);
+
+  auto prototype = [&](const char* type, const char* name) {
+    LuaValue category = lua.GetField(raw.tableRef, type);
+    if (category.kind != LuaValue::Kind::Table) return false;
+    return lua.GetField(category.tableRef, name).kind == LuaValue::Kind::Table;
+  };
+  // Pyanodon content from the corpus alongside vanilla (the lead chain from
+  // the reference screenshot lives in pyrawores).
+  CHECK(prototype("item", "iron-plate"));
+  CHECK(prototype("item", "lead-plate"));
+  CHECK(prototype("item", "ore-lead"));
+  CHECK(prototype("item", "grade-1-lead"));
+  CHECK(prototype("recipe", "grade-1-lead"));
+}
