@@ -14,3 +14,6 @@ solver-wasm/demo/out/
 
 # web app build output
 web/dist/
+
+# stray compiler output
+a.out
