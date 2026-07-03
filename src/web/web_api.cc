@@ -721,8 +721,18 @@ static std::string projectLoad(std::string text) {
 
 static std::string iconLayers(std::string tdn) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
-  if (!g_bundle->iconManifest.contains(tdn)) return "[]";
-  return g_bundle->iconManifest[tdn].dump();
+  // Fallback chain for bundles built before icon aliasing (recipe -> main
+  // product, mechanics -> source, entity -> placing item).
+  FactorioObject* o = Db().FindByTypeDotName(tdn);
+  for (int depth = 0; depth < 4; ++depth) {
+    if (g_bundle->iconManifest.contains(tdn)) {
+      return g_bundle->iconManifest[tdn].dump();
+    }
+    o = IconFallbackStep(o);
+    if (o == nullptr) break;
+    tdn = o->typeDotName();
+  }
+  return "[]";
 }
 
 static emscripten::val iconFile(std::string file) {

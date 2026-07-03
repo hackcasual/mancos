@@ -684,6 +684,23 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
 
 // ------------------------------------------------------------------ bundle ----
 
+FactorioObject* IconFallbackStep(FactorioObject* o) {
+  if (o == nullptr) return nullptr;
+  // Mechanics before Recipe: Mechanics derives from Recipe, and desktop shows
+  // e.g. "mining lead rock" with the rock's icon, boiler steam with the
+  // boiler's.
+  if (auto* mechanics = dynamic_cast<Mechanics*>(o)) {
+    if (mechanics->source != nullptr) return mechanics->source;
+  }
+  if (auto* recipe = dynamic_cast<RecipeOrTechnology*>(o)) {
+    if (!recipe->products.empty()) return recipe->products[0].goods;
+  }
+  if (auto* entity = dynamic_cast<Entity*>(o)) {
+    if (!entity->itemsToPlace.empty()) return entity->itemsToPlace[0];
+  }
+  return nullptr;
+}
+
 BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
                              const ModSet& mods, const std::string& factorioVersion,
                              const std::map<std::string, std::string>& modVersions,
@@ -733,6 +750,21 @@ BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
       any = true;
     }
     if (any) manifest[o->typeDotName()] = std::move(layers);
+  }
+  // Objects without their own icon inherit one along the desktop fallback
+  // chain (recipe -> main product, mechanics -> source, entity -> placer);
+  // bake the alias so any bundle consumer gets complete coverage.
+  for (FactorioObject* o : db.objects) {
+    if (manifest.contains(o->typeDotName())) continue;
+    FactorioObject* source = o;
+    for (int depth = 0; depth < 4; ++depth) {
+      source = IconFallbackStep(source);
+      if (source == nullptr) break;
+      if (auto it = manifest.find(source->typeDotName()); it != manifest.end()) {
+        manifest[o->typeDotName()] = *it;
+        break;
+      }
+    }
   }
   stats.iconFiles = iconFiles.size();
 

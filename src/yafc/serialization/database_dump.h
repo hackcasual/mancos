@@ -31,6 +31,12 @@ nlohmann::json DumpDatabase(const Database& db);
 // Throws std::runtime_error on malformed/unsupported dumps.
 std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump);
 
+// One step of the desktop icon-fallback chain, for objects without their own
+// icon: mechanics use their source's icon, recipes/technologies their main
+// product's, entities the item that places them. nullptr = no further
+// fallback. Callers loop with a small depth cap.
+FactorioObject* IconFallbackStep(FactorioObject* o);
+
 // ---- bundles ----
 struct BundleWriteStats {
   size_t objects = 0;
