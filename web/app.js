@@ -124,7 +124,72 @@ async function pushResearch() {
   if (bundleKey) localStorage.setItem(bundleKey + ':research', JSON.stringify(research));
 }
 
+// ---- undo/redo: pages-state snapshots captured on every persisted change.
+// Tab switches update the tracked state silently (not undoable themselves),
+// but each undo restores the page that was active when that edit was made.
+const undoStack = [];
+const redoStack = [];
+let lastPagesJson = null;   // change detector (pages only)
+let lastSnapshot = null;    // full state incl. activePage
+let restoringHistory = false;
+
+function updateUndoButtons() {
+  $('#undoBtn').disabled = undoStack.length === 0;
+  $('#redoBtn').disabled = redoStack.length === 0;
+}
+
+function recordHistory() {
+  const pagesJson = JSON.stringify(pages);
+  const state = JSON.stringify({ pages, activePage });
+  if (lastPagesJson !== null && pagesJson !== lastPagesJson) {
+    undoStack.push(lastSnapshot);
+    if (undoStack.length > 100) undoStack.shift();
+    redoStack.length = 0;
+  }
+  lastPagesJson = pagesJson;
+  lastSnapshot = state;
+  updateUndoButtons();
+}
+
+function applySnapshot(text) {
+  const parsed = JSON.parse(text);
+  pages = parsed.pages;
+  activePage = Math.min(parsed.activePage ?? 0, pages.length - 1);
+  lastPagesJson = JSON.stringify(pages);
+  lastSnapshot = text;
+  bindActivePage();
+  renderPageTabs();
+}
+
+async function timeTravel(fromStack, toStack) {
+  if (fromStack.length === 0) return;
+  toStack.push(JSON.stringify({ pages, activePage }));
+  restoringHistory = true;
+  applySnapshot(fromStack.pop());
+  await rebuildAndSolve();
+  restoringHistory = false;
+  updateUndoButtons();
+}
+const undo = () => timeTravel(undoStack, redoStack);
+const redo = () => timeTravel(redoStack, undoStack);
+$('#undoBtn').onclick = undo;
+$('#redoBtn').onclick = redo;
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const key = e.key.toLowerCase();
+  if (key === 'z') {
+    e.preventDefault();
+    e.shiftKey ? redo() : undo();
+  } else if (key === 'y') {
+    e.preventDefault();
+    redo();
+  }
+});
+
 function persist() {
+  if (!restoringHistory) recordHistory();
   if (bundleKey) {
     localStorage.setItem(bundleKey, JSON.stringify({ pages, activePage }));
   }
@@ -987,6 +1052,13 @@ async function loadBundleBuffer(buffer, label, packId) {
   if (packId) localStorage.setItem('yafc:lastPack', packId);
   status(`${info.objects} objects · ${info.recipes} recipes · factorio ${info.meta.factorioVersion}`);
   bundleKey = 'yafc:' + JSON.stringify(info.meta.mods ?? label);
+  // History is per-bundle: undoing into another pack's pages would resolve
+  // against the wrong database.
+  undoStack.length = 0;
+  redoStack.length = 0;
+  lastPagesJson = null;
+  lastSnapshot = null;
+  updateUndoButtons();
   try {
     research = JSON.parse(localStorage.getItem(bundleKey + ':research')) ??
                { filter: false, techs: [] };
@@ -1015,6 +1087,7 @@ async function loadBundleBuffer(buffer, label, packId) {
       renderSolve({ status: 0, rows: [], links: [], flows: [] });
     }
   }
+  recordHistory();  // baseline so the very first edit is undoable
   for (const id of ['shareBtn', 'exportBtn', 'importBtn']) {
     document.getElementById(id).disabled = false;
   }
