@@ -16,6 +16,8 @@
 #include <miniz.h>
 #include <nlohmann/json.hpp>
 
+#include "yafc/analysis/dependencies.h"
+#include "yafc/analysis/milestones.h"
 #include "yafc/model/production_table.h"
 #include "yafc/parser/locale.h"
 #include "yafc/serialization/serialization.h"
@@ -31,7 +33,38 @@ std::unique_ptr<ProductionTable> g_table;
 std::unordered_set<const Technology*> g_researched;
 bool g_researchFilter = false;
 
+// Milestone gating (desktop Milestones dialog). Computed lazily: the walks
+// cost a few flood fills over the whole database, so tests/smokes that never
+// touch milestones don't pay for them.
+std::unique_ptr<Dependencies> g_deps;
+std::unique_ptr<Milestones> g_milestones;
+std::unordered_set<const FactorioObject*> g_unlockedMilestones;
+
 Database& Db() { return *g_bundle->db; }
+
+void EnsureMilestones() {
+  if (g_milestones != nullptr) return;
+  g_deps = std::make_unique<Dependencies>();
+  g_deps->Calculate(Db());
+  g_milestones = std::make_unique<Milestones>();
+  MilestonesInput input;  // default milestones: science packs + locations
+  input.unlockedMilestones = g_unlockedMilestones;
+  g_milestones->Compute(Db(), *g_deps, input);
+}
+
+// Adds "milestone" (highest locked milestone) or "inaccessible" to a brief
+// when the object is gated; no-ops until the milestone analysis has run.
+void AddMilestoneInfo(json& brief, const FactorioObject* o) {
+  if (g_milestones == nullptr) return;
+  if (!g_milestones->IsAccessible(o)) {
+    brief["inaccessible"] = true;
+    return;
+  }
+  if (g_milestones->IsAccessibleWithCurrentMilestones(o)) return;
+  if (FactorioObject* m = g_milestones->GetHighest(o, /*all=*/false)) {
+    brief["milestone"] = json{{"tdn", m->typeDotName()}, {"locName", m->locName}};
+  }
+}
 
 float CostOf(const FactorioObject* o) {
   if (o == nullptr || g_bundle->costs.empty()) return 0;
@@ -53,8 +86,10 @@ bool IsAvailable(const RecipeOrTechnology* r) {
 }
 
 json GoodsBrief(const Goods* g) {
-  return json{{"tdn", g->typeDotName()}, {"name", g->name},
-              {"locName", g->locName},   {"kind", std::string(g->type())}};
+  json brief{{"tdn", g->typeDotName()}, {"name", g->name},
+             {"locName", g->locName},   {"kind", std::string(g->type())}};
+  AddMilestoneInfo(brief, g);
+  return brief;
 }
 
 json RecipeBrief(const RecipeOrTechnology* r) {
@@ -73,18 +108,31 @@ json RecipeBrief(const RecipeOrTechnology* r) {
       unlockedBy.push_back(tech->locName);
     }
   }
-  return json{{"tdn", r->typeDotName()}, {"name", r->name},
-              {"locName", r->locName},   {"time", r->time},
-              {"cost", CostOf(r)},       {"available", IsAvailable(r)},
-              {"unlockedBy", std::move(unlockedBy)},
-              {"in", std::move(in)},     {"out", std::move(out)}};
+  json brief{{"tdn", r->typeDotName()}, {"name", r->name},
+             {"locName", r->locName},   {"time", r->time},
+             {"cost", CostOf(r)},       {"available", IsAvailable(r)},
+             {"unlockedBy", std::move(unlockedBy)},
+             {"in", std::move(in)},     {"out", std::move(out)}};
+  AddMilestoneInfo(brief, r);
+  return brief;
 }
 
 // Candidate ordering (user directive): available first, then yafc cost.
+// Milestone gating stacks on top: reachable-now < research-locked <
+// beyond-current-milestones < statically inaccessible.
+int RecipeRank(const RecipeOrTechnology* r) {
+  if (g_milestones != nullptr) {
+    if (!g_milestones->IsAccessible(r)) return 3;
+    if (!g_milestones->IsAccessibleWithCurrentMilestones(r)) return 2;
+  }
+  return IsAvailable(r) ? 0 : 1;
+}
+
 void SortRecipes(std::vector<const RecipeOrTechnology*>& list) {
   std::stable_sort(list.begin(), list.end(),
                    [](const RecipeOrTechnology* a, const RecipeOrTechnology* b) {
-                     if (IsAvailable(a) != IsAvailable(b)) return IsAvailable(a);
+                     int rankA = RecipeRank(a), rankB = RecipeRank(b);
+                     if (rankA != rankB) return rankA < rankB;
                      return CostOf(a) < CostOf(b);
                    });
 }
@@ -104,6 +152,9 @@ static std::string loadBundlePtr(unsigned ptr, unsigned length) {
     auto bundle = std::make_unique<Bundle>(ReadBundleFromMemory(bytes));
     g_bundle = std::move(bundle);
     g_table = std::make_unique<ProductionTable>();
+    g_deps.reset();
+    g_milestones.reset();
+    g_unlockedMilestones.clear();
     return json{{"objects", Db().objects.count()},
                 {"recipes", Db().recipes.count()},
                 {"items", Db().items.count()},
@@ -163,8 +214,12 @@ static std::string tableAddLink(std::string tdn, double amountPerMinute) {
 }
 
 // fixedCraftsPerSecond > 0 pins the row's rate (recipeTime defaults to 1 in
-// the parameters seam, so fixedBuildings == crafts/second).
-static std::string tableAddRecipe(std::string tdn, double fixedCraftsPerSecond) {
+// the parameters seam, so fixedBuildings == crafts/second). entityTdn/fuelTdn
+// carry a project's per-row choices; empty picks the desktop-style defaults
+// (first crafter, its first fuel). A project's fuel choice matters: a reactor
+// burning mox vs uranium cells produces different spent fuel.
+static std::string tableAddRecipe(std::string tdn, double fixedCraftsPerSecond,
+                                  std::string entityTdn, std::string fuelTdn) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* r = dynamic_cast<RecipeOrTechnology*>(Db().FindByTypeDotName(tdn));
   if (r == nullptr) return Err("unknown recipe " + tdn);
@@ -172,14 +227,21 @@ static std::string tableAddRecipe(std::string tdn, double fixedCraftsPerSecond) 
   if (fixedCraftsPerSecond > 0) {
     row->fixedRate = static_cast<float>(fixedCraftsPerSecond);
   }
-  // Default selections, like desktop does at row creation: the first crafter
-  // (data order; entity picker UI later) and its first fuel.
-  if (!r->crafters.empty()) {
-    row->entity = {r->crafters[0], Db().qualityNormal};
-    if (r->crafters[0]->hasEnergy && !r->crafters[0]->energy.fuels.empty()) {
-      row->fuel = {r->crafters[0]->energy.fuels[0], nullptr};
-    }
+  EntityCrafter* entity = nullptr;
+  if (!entityTdn.empty()) {
+    entity = dynamic_cast<EntityCrafter*>(Db().FindByTypeDotName(entityTdn));
   }
+  if (entity == nullptr && !r->crafters.empty()) entity = r->crafters[0];
+  if (entity != nullptr) row->entity = {entity, Db().qualityNormal};
+  Goods* fuel = nullptr;
+  if (!fuelTdn.empty()) {
+    fuel = dynamic_cast<Goods*>(Db().FindByTypeDotName(fuelTdn));
+  }
+  if (fuel == nullptr && entity != nullptr && entity->hasEnergy &&
+      !entity->energy.fuels.empty()) {
+    fuel = entity->energy.fuels[0];
+  }
+  if (fuel != nullptr) row->fuel = {fuel, nullptr};
   return json{{"ok", true}, {"recipe", RecipeBrief(r)}}.dump();
 }
 
@@ -197,6 +259,20 @@ static std::string tableSolve() {
     for (const Ingredient& i : row->recipe->ingredients) {
       flows.push_back(json{{"tdn", i.goods->typeDotName()},
                            {"perMin", -i.amount * row->recipesPerSecond}});
+    }
+    // Item fuels show like desktop: fuel as an ingredient, its spent form as
+    // a product. Power fuels stay off the chips — the nameplate shows kW.
+    if (row->fuel && !row->fuel.target->isPower()) {
+      double fuelFlow =
+          row->parameters.fuelUsagePerSecondPerRecipe() * row->recipesPerSecond;
+      if (fuelFlow > 0) {
+        flows.push_back(json{{"tdn", row->fuel.target->typeDotName()},
+                             {"perMin", -fuelFlow}});
+        if (Item* spent = row->fuel.target->HasSpentFuel()) {
+          flows.push_back(json{{"tdn", spent->typeDotName()},
+                               {"perMin", fuelFlow}});
+        }
+      }
     }
     json entity;
     if (row->entity.target != nullptr) {
@@ -289,6 +365,41 @@ static std::string setResearch(std::string request) {
   return json{{"filter", g_researchFilter}, {"techs", std::move(techs)}}.dump();
 }
 
+// Milestones (desktop Milestones dialog): the current milestone set in
+// discovery order, with each one's unlocked ("I have access to this") state.
+static std::string milestonesJson() {
+  json list = json::array();
+  for (FactorioObject* m : g_milestones->currentMilestones) {
+    list.push_back(json{{"tdn", m->typeDotName()},
+                        {"locName", m->locName},
+                        {"unlocked", g_unlockedMilestones.count(m) != 0}});
+  }
+  return list.dump();
+}
+
+static std::string milestonesList() {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  EnsureMilestones();
+  return milestonesJson();
+}
+
+// Input: {"unlocked":[tdn...]}. Only the locked mask changes, so this is
+// cheap; the accessibility walks from EnsureMilestones are reused.
+static std::string setMilestones(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded()) return Err("bad request");
+  EnsureMilestones();
+  g_unlockedMilestones.clear();
+  for (const auto& tdn : parsed.value("unlocked", std::vector<std::string>())) {
+    if (FactorioObject* obj = Db().FindByTypeDotName(tdn)) {
+      g_unlockedMilestones.insert(obj);
+    }
+  }
+  g_milestones->SetUnlocked(g_unlockedMilestones);
+  return milestonesJson();
+}
+
 // Leveled families (human priority 4): "steel-mk03" / "physical-damage-4"
 // group under a base name with a numeric level; level 0 = no level suffix.
 static std::pair<std::string, int> TechFamily(const std::string& name) {
@@ -354,7 +465,16 @@ static std::string projectSaveAll(std::string pagesJson) {
     for (const json& row : p.value("rows", json::array())) {
       auto* recipe = dynamic_cast<RecipeOrTechnology*>(
           Db().FindByTypeDotName(row.value("tdn", "")));
-      if (recipe != nullptr) page->content.AddRecipe(recipe);
+      if (recipe == nullptr) continue;
+      RecipeRow* added = page->content.AddRecipe(recipe);
+      if (auto* fuel = dynamic_cast<Goods*>(
+              Db().FindByTypeDotName(row.value("fuel", "")))) {
+        added->fuel = {fuel, nullptr};
+      }
+      if (auto* entity = dynamic_cast<EntityCrafter*>(
+              Db().FindByTypeDotName(row.value("entity", "")))) {
+        added->entity = {entity, Db().qualityNormal};
+      }
     }
     project.pages.push_back(std::move(page));
   }
@@ -386,7 +506,12 @@ static std::string projectLoad(std::string text) {
     source.GetAllRecipes(allRows);
     for (const RecipeRow* row : allRows) {
       if (row->recipe == nullptr) continue;
-      rows.push_back(json{{"tdn", row->recipe->typeDotName()}});
+      json rowJson{{"tdn", row->recipe->typeDotName()}};
+      if (row->fuel) rowJson["fuel"] = row->fuel.target->typeDotName();
+      if (row->entity.target != nullptr) {
+        rowJson["entity"] = row->entity.target->typeDotName();
+      }
+      rows.push_back(std::move(rowJson));
     }
     pages.push_back(json{{"name", pagePtr->name},
                          {"goals", std::move(goals)},
@@ -465,6 +590,8 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("setLanguage", &setLanguage);
   emscripten::function("setResearch", &setResearch);
   emscripten::function("searchTechs", &searchTechs);
+  emscripten::function("milestonesList", &milestonesList);
+  emscripten::function("setMilestones", &setMilestones);
   emscripten::function("iconLayers", &iconLayers);
   emscripten::function("iconFile", &iconFile);
 }

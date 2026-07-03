@@ -163,6 +163,13 @@ TEST_CASE("milestones: accessibility, masks, locking, GetHighest") {
   input.unlockedMilestones = {w.pack};
   ms.Compute(w.db, w.deps, input);
   CHECK(ms.IsAccessibleWithCurrentMilestones(w.tech));
+
+  // SetUnlocked flips the locked mask without re-running the walks.
+  ms.SetUnlocked({});
+  CHECK(!ms.IsAccessibleWithCurrentMilestones(w.tech));
+  CHECK(ms.GetHighest(w.tech, /*all=*/false) == w.pack);
+  ms.SetUnlocked({w.pack});
+  CHECK(ms.IsAccessibleWithCurrentMilestones(w.tech));
 }
 
 TEST_CASE("milestones: marked-inaccessible objects stay out and get predictions") {

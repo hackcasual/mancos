@@ -43,6 +43,10 @@ class JsonWriter {
     if (v.target != nullptr) out_[name] = v.target->typeDotName();
   }
   template <typename T>
+  void Prop(const char* name, const ObjectWithQuality<T>& v) {
+    if (v.target != nullptr) out_[name] = v.target->typeDotName();
+  }
+  template <typename T>
     requires std::derived_from<T, FactorioObject>
   void Prop(const char* name, const std::vector<T*>& refs) {
     nlohmann::json arr = nlohmann::json::array();
@@ -109,6 +113,11 @@ class JsonReader {
   void Prop(const char* name, QualityGoods& v) {
     std::string typeDotName;
     if (Read(name, typeDotName)) v.target = Resolve<Goods>(typeDotName);
+  }
+  template <typename T>
+  void Prop(const char* name, ObjectWithQuality<T>& v) {
+    std::string typeDotName;
+    if (Read(name, typeDotName)) v.target = Resolve<T>(typeDotName);
   }
   template <typename T>
     requires std::derived_from<T, FactorioObject>
@@ -196,6 +205,7 @@ template <typename V>
 void VisitRow(RecipeRow& row, V& v) {
   v.Prop("recipe", row.recipe);
   v.Prop("fuel", row.fuel);
+  v.Prop("entity", row.entity);
   v.Prop("fixedBuildings", row.fixedBuildings);
   v.Prop("builtBuildings", row.builtBuildings);
   v.Prop("enabled", row.enabled);

@@ -182,7 +182,12 @@ async function rebuildAndSolve() {
   // Table units are per SECOND (desktop yafc compatible); UI shows /min.
   for (const goal of goals) await rpc('tableAddLink', goal.tdn, goal.perMin / 60);
   for (const tdn of linked) await rpc('tableAddLink', tdn, 0);
-  for (const row of rows) await rpc('tableAddRecipe', row.tdn, (row.fixed ?? 0) / 60);
+  // Rows carry per-project entity/fuel choices ('' = desktop-style defaults):
+  // a reactor burning mox vs uranium cells is a different production chain.
+  for (const row of rows) {
+    await rpc('tableAddRecipe', row.tdn, (row.fixed ?? 0) / 60,
+              row.entity ?? '', row.fuel ?? '');
+  }
   renderSolve(await rpc('tableSolve'));
 }
 
@@ -338,8 +343,10 @@ async function pullCandidates(tdn, wantProducers) {
   if (!inTable(tdn)) linked.push(tdn);
   const info = await rpc('goodsInfo', tdn);
   const list = wantProducers ? info.producers : info.consumers;
-  // API pre-sorts: available first, then yafc cost ascending.
-  const available = list.filter((r) => r.available !== false);
+  // API pre-sorts: available first, then yafc cost ascending. Auto-pick never
+  // grabs a recipe that is research- or milestone-locked.
+  const available = list.filter((r) =>
+      r.available !== false && !r.milestone && !r.inaccessible);
   if (available.length === 1) {
     rows.push({ tdn: available[0].tdn });
     await rebuildAndSolve();
@@ -351,10 +358,24 @@ async function pullCandidates(tdn, wantProducers) {
       list);
 }
 
+// Milestone/accessibility badge (desktop paints the milestone icon on locked
+// objects). Applies to anything carrying the brief's milestone fields.
+async function lockBadge(o) {
+  if (o.inaccessible) {
+    return '<span class="muted" title="Not reachable with this modpack’s data">\u{1F6AB}</span>';
+  }
+  if (o.milestone) {
+    return `<span class="ms-lock" title="Beyond milestone: ${esc(o.milestone.locName)}">` +
+           `${await iconImg(o.milestone.tdn)}</span>`;
+  }
+  return '';
+}
+
 async function renderRecipeList(title, list, header = '') {
   const items = await Promise.all(list.map(async (r) =>
-      `<div class="row">${await iconImg(r.tdn)}` +
+      `<div class="row"${r.inaccessible ? ' style="opacity:.55"' : ''}>${await iconImg(r.tdn)}` +
       `<span title="${esc(r.tdn)}">${esc(r.locName)}</span>` +
+      `${await lockBadge(r)}` +
       `${r.available === false ? `<span title="requires: ${esc((r.unlockedBy || []).join(', '))}">\u{1F512}</span>` : ''}` +
       `${cost(r.cost)}<span class="muted mono">${r.time}s</span>` +
       `<button class="small" data-add="${r.tdn}">+ row</button></div>` +
@@ -386,7 +407,7 @@ $('#search').oninput = async (e) => {
   const results = await rpc('searchGoods', query, 20);
   const html = await Promise.all(results.map(async (g) =>
       `<div class="row goods" data-tdn="${g.tdn}" style="cursor:pointer" tabindex="0">` +
-      `${await iconImg(g.tdn)}<span>${esc(g.locName)}</span>` +
+      `${await iconImg(g.tdn)}<span>${esc(g.locName)}</span>${await lockBadge(g)}` +
       `<span class="muted">${esc(g.kind)}</span></div>`));
   $('#results').innerHTML = html.join('');
   for (const el of $('#results').querySelectorAll('[data-tdn]')) {
@@ -657,6 +678,66 @@ function renderTechs(list) {
   }
 }
 
+// ---- milestones (desktop "Milestones" dialog) ----
+let milestones = [];  // [{tdn, locName, unlocked}] in discovery order
+
+async function pushMilestones() {
+  const unlocked = milestones.filter((m) => m.unlocked).map((m) => m.tdn);
+  milestones = await rpc('setMilestones', JSON.stringify({ unlocked }));
+  if (bundleKey) {
+    localStorage.setItem(bundleKey + ':milestones', JSON.stringify(unlocked));
+  }
+  renderMilestonesSummary();
+}
+
+function renderMilestonesSummary() {
+  const reached = milestones.filter((m) => m.unlocked).length;
+  $('#milestonesSummary').textContent =
+      milestones.length ? `${reached}/${milestones.length} reached` : '';
+}
+
+async function renderMilestoneGrid() {
+  const grid = $('#milestoneGrid');
+  grid.innerHTML = (await Promise.all(milestones.map(async (m, i) =>
+      `<button class="ms${m.unlocked ? ' on' : ''}" data-ms="${i}"
+         title="${esc(m.locName)}" aria-pressed="${m.unlocked}">
+         ${await iconImg(m.tdn)}</button>`))).join('');
+  for (const btn of grid.querySelectorAll('[data-ms]')) {
+    btn.onclick = async () => {
+      const m = milestones[+btn.dataset.ms];
+      m.unlocked = !m.unlocked;
+      await pushMilestones();
+      renderMilestoneGrid();
+    };
+  }
+}
+
+async function setAllMilestones(unlocked) {
+  for (const m of milestones) m.unlocked = unlocked;
+  await pushMilestones();
+  renderMilestoneGrid();
+}
+
+async function openMilestones() {
+  await renderMilestoneGrid();
+  renderMilestonesSummary();
+  $('#milestonesDialog').showModal();
+}
+$('#milestonesBtn').onclick = openMilestones;
+$('#milestonesAll').onclick = () => setAllMilestones(true);
+$('#milestonesNone').onclick = () => setAllMilestones(false);
+$('#milestonesDone').onclick = () => $('#milestonesDialog').close();
+$('#milestonesDialog').onclose = () => {
+  // Persist even when untouched so the dialog only auto-opens once per pack.
+  if (bundleKey) {
+    localStorage.setItem(bundleKey + ':milestones', JSON.stringify(
+        milestones.filter((m) => m.unlocked).map((m) => m.tdn)));
+  }
+  // Lock badges in the open search list may be stale now.
+  const search = $('#search');
+  if (search.value.trim().length >= 2) search.oninput({ target: search });
+};
+
 // ---- bundle loading ----
 $('#loadBtn').onclick = () => $('#bundleFile').click();
 $('#bundleFile').onchange = async (e) => {
@@ -731,6 +812,17 @@ async function loadBundleBuffer(buffer, label, packId) {
   for (const id of ['shareBtn', 'exportBtn', 'importBtn']) {
     document.getElementById(id).disabled = false;
   }
+  // Milestones last: the first call runs the accessibility walks in the
+  // worker, so the initial solve above is never queued behind them. First
+  // load of a pack opens the dialog, like desktop's new-project flow.
+  let savedMilestones = null;
+  try {
+    savedMilestones = JSON.parse(localStorage.getItem(bundleKey + ':milestones'));
+  } catch { /* treat as first visit */ }
+  milestones = await rpc('setMilestones',
+                         JSON.stringify({ unlocked: savedMilestones ?? [] }));
+  renderMilestonesSummary();
+  if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
 }
 
 // Mobile: the catalog is a bottom sheet behind the floating button.

@@ -241,6 +241,20 @@ Recipe + status: `solver-wasm/README.md`.
    optional researched-only filter gating candidate availability with lock badges).
    Next: TS types, multi-language catalogs (done), .yafc project import/export (done),
    RecipeParameters for building counts (done 2026-07-03); modules/beacons UI next.
+   Increment 4 (2026-07-03): Milestones filter (desktop Milestones dialog): lazy
+   Dependencies+Milestones compute in the worker (~100ms pyanodon), milestonesList/
+   setMilestones APIs (Milestones::SetUnlocked = mask-only update, ~0.4ms/toggle),
+   per-bundle persisted unlocked set, auto-opening <dialog> on first pack load,
+   milestone-icon lock badges + rank sort (reachable < research-locked <
+   milestone-locked < inaccessible) in candidate lists and goods search; auto-pull
+   skips gated recipes. Spent-fuel fix (user bug report, nuclear sample page):
+   burning a fuel with fuelResult now emits the spent item 1:1 in the solver flatten,
+   CalculateFlow and per-row web flows (desktop parity); per-row entity/fuel choices
+   round-trip through .yafc load/save (VisitRow "entity" prop added) and
+   tableAddRecipe(tdn, fixed, entityTdn, fuelTdn) — a reactor burning mox vs uranium
+   cells is a different chain; user's 53-page project: every page solves.
+   Not ported yet: custom milestone sets ("Edit milestones" editor), tech progression
+   settings dialog; temperature-variant fluid links (steam@250) can stay unmatched.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

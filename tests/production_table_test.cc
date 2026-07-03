@@ -187,6 +187,61 @@ TEST_CASE("crafter speed, power and fuel drive recipe parameters") {
   CHECK(foundPower);
 }
 
+// Nuclear-style loop: a reactor burns fuel cells (fuel, not ingredient) into
+// spent cells, which reprocessing recovers into part of the ore that new
+// cells are made from. Without the spent-fuel product the loop deadlocks.
+TEST_CASE("burning fuel emits its spent form and closes reprocessing loops") {
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Item* cell = Add<Item>(objects, "fuel-cell");
+  Item* spent = Add<Item>(objects, "spent-cell");
+  Item* heat = Add<Item>(objects, "heat");
+  cell->fuelValue = 1;
+  cell->fuelResult = spent;
+  Recipe* mine = Add<Recipe>(objects, "mine");
+  mine->products.emplace_back(ore, 1.0f);
+  Recipe* makeCell = Add<Recipe>(objects, "make-cell");
+  makeCell->ingredients.emplace_back(ore, 1.0f);
+  makeCell->products.emplace_back(cell, 1.0f);
+  Recipe* burn = Add<Recipe>(objects, "burn");
+  burn->time = 1;
+  burn->products.emplace_back(heat, 1.0f);
+  Recipe* reprocess = Add<Recipe>(objects, "reprocess");
+  reprocess->ingredients.emplace_back(spent, 1.0f);
+  reprocess->products.emplace_back(ore, 0.5f);
+  auto* reactor = Add<EntityCrafter>(objects, "reactor");
+  reactor->baseCraftingSpeed = 1;
+  reactor->basePower = 1;  // MW; fuelValue 1 -> 1 cell/s per building
+  reactor->hasEnergy = true;
+  reactor->energy.fuels.push_back(cell);
+  Database db;
+  db.LoadBuiltData(std::move(objects));
+
+  ProductionTable root;
+  root.AddLink({heat, nullptr}, 10);
+  ProductionLink* cellLink = root.AddLink({cell, nullptr});
+  ProductionLink* spentLink = root.AddLink({spent, nullptr});
+  root.AddLink({ore, nullptr});
+  root.AddRecipe(mine);
+  RecipeRow* makeRow = root.AddRecipe(makeCell);
+  RecipeRow* burnRow = root.AddRecipe(burn);
+  burnRow->entity = {reactor, nullptr};
+  burnRow->fuel = {cell, nullptr};
+  RecipeRow* reprocessRow = root.AddRecipe(reprocess);
+
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  CHECK(burnRow->recipesPerSecond == doctest::Approx(10));
+  CHECK(makeRow->recipesPerSecond == doctest::Approx(10));
+  CHECK(reprocessRow->recipesPerSecond == doctest::Approx(10));
+  // Spent cells are produced by burning, consumed by reprocessing: matched.
+  CHECK((spentLink->flags & LinkFlags::kLinkNotMatched) == 0);
+  CHECK(spentLink->linkFlow == doctest::Approx(10));
+  CHECK((cellLink->flags & LinkFlags::kLinkNotMatched) == 0);
+  CHECK(cellLink->linkFlow == doctest::Approx(10));
+  // No deadlock warnings anywhere.
+  CHECK((burnRow->parameters.warningFlags & WarningFlags::kDeadlockCandidate) == 0);
+}
+
 TEST_CASE("disabled rows are excluded from the solve") {
   Goods2 g;
   ProductionTable root;

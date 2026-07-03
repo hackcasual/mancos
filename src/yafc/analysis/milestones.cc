@@ -152,13 +152,7 @@ MilestonesWarnings Milestones::Compute(const Database& db, const Dependencies& d
     }
   }
 
-  // Locked mask from researched milestones (bit 0 always set).
-  Bits locked(true);
-  for (size_t i = 0; i < currentMilestones.size(); ++i) {
-    locked.Set(static_cast<int>(i) + 1,
-               input.unlockedMilestones.count(currentMilestones[i]) == 0);
-  }
-  lockedMask = locked;
+  SetUnlocked(input.unlockedMilestones);
 
   int accessibleObjects =
       static_cast<int>(std::count(baseAccessibility.begin(), baseAccessibility.end(), true));
@@ -170,6 +164,16 @@ MilestonesWarnings Milestones::Compute(const Database& db, const Dependencies& d
     }
   }
   return warnings;
+}
+
+void Milestones::SetUnlocked(
+    const std::unordered_set<const FactorioObject*>& unlocked) {
+  // Locked mask from researched milestones (bit 0 always set).
+  Bits locked(true);
+  for (size_t i = 0; i < currentMilestones.size(); ++i) {
+    locked.Set(static_cast<int>(i) + 1, unlocked.count(currentMilestones[i]) == 0);
+  }
+  lockedMask = locked;
 }
 
 FactorioObject* Milestones::GetHighest(const FactorioObject* target, bool all) const {

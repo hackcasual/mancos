@@ -146,8 +146,14 @@ TableSolveResult ProductionTable::Solve() {
     if (row->fuel) {
       ProductionLink* link = nullptr;
       row->FindLink(row->fuel, &link);
+      double fuelPerRecipe = row->parameters.fuelUsagePerSecondPerRecipe();
       sr.ingredients.push_back({link != nullptr ? linkIndex[link] : -1,
-                                row->parameters.fuelUsagePerSecondPerRecipe()});
+                                fuelPerRecipe});
+      // Burning fuel yields its spent form 1:1 (upstream HasSpentFuel), e.g.
+      // fuel cells -> used-up cells; closes nuclear reprocessing loops.
+      if (Item* spent = row->fuel.target->HasSpentFuel(); spent && fuelPerRecipe > 0) {
+        sr.products.push_back({resolve(row, spent), fuelPerRecipe});
+      }
     }
   }
 
@@ -182,8 +188,12 @@ void AddFlow(const RecipeRow& row,
     cons += ingredient.amount * row.recipesPerSecond;
   }
   if (row.fuel) {
+    double fuelFlow = row.parameters.fuelUsagePerSecondPerRecipe() * row.recipesPerSecond;
     auto& [prod, cons] = summer[{row.fuel.target, row.fuel.quality}];
-    cons += row.parameters.fuelUsagePerSecondPerRecipe() * row.recipesPerSecond;
+    cons += fuelFlow;
+    if (Item* spent = row.fuel.target->HasSpentFuel()) {
+      summer[{spent, row.fuel.quality}].first += fuelFlow;
+    }
   }
 }
 

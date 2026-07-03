@@ -172,6 +172,34 @@
   }
   #dropHint code { font-family: var(--mono); color: var(--blueprint); }
   #dropHint a { color: var(--blueprint); }
+
+  /* ---- milestones dialog (desktop yafc "Milestones" panel) ---- */
+  dialog {
+    background: var(--panel); color: var(--ink); border: 1px solid var(--panel-edge);
+    border-radius: 4px; padding: 18px 22px; max-width: 560px; width: calc(100vw - 40px);
+  }
+  dialog::backdrop { background: rgba(8, 10, 14, .72); }
+  #milestonesDialog h2 {
+    margin: 0 0 4px; font-family: var(--condensed); font-size: 16px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+  #milestoneGrid { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
+  #milestoneGrid button.ms {
+    width: 46px; height: 46px; padding: 4px; background: #14181f;
+    border: 1px solid var(--panel-edge); border-radius: 3px; position: relative;
+  }
+  #milestoneGrid button.ms img { width: 100%; height: 100%; image-rendering: pixelated;
+    filter: grayscale(1) brightness(.55); }
+  #milestoneGrid button.ms.on { border-color: var(--signal-green); background: #1b2a1b; }
+  #milestoneGrid button.ms.on img { filter: none; }
+  #milestoneGrid button.ms.on::after {
+    content: "✓"; position: absolute; right: 1px; bottom: -2px;
+    color: var(--signal-green); font-size: 12px; font-weight: 700;
+  }
+  #milestonesDialog .foot { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  #milestonesDialog .foot button { margin-left: auto; }
+  .ms-lock { display: inline-flex; align-items: center; flex: none; }
+  .ms-lock img { width: 16px !important; height: 16px !important; opacity: .8; }
   @media (prefers-reduced-motion: no-preference) {
     .plate { transition: border-color .15s ease; }
   }
@@ -201,7 +229,11 @@
       <div id="recipeInfo"></div>
     </div>
     <div id="researchPanel" hidden>
-      <label class="row" style="margin-top:10px">
+      <div class="row" style="margin-top:10px">
+        <button id="milestonesBtn" class="small">Milestones…</button>
+        <span id="milestonesSummary" class="muted mono"></span>
+      </div>
+      <label class="row">
         <input type="checkbox" id="researchFilter">
         <span>Only offer researched recipes</span>
       </label>
@@ -232,6 +264,21 @@
   </div>
 </main>
 <button id="catalogFab" aria-label="Open catalog">+</button>
+<dialog id="milestonesDialog">
+  <h2>Milestones</h2>
+  <div class="muted">Select the objects you already have access to:</div>
+  <div id="milestoneGrid"></div>
+  <div class="muted" style="font-size:12.5px">
+    Anything locked behind an unselected milestone is shown with that
+    milestone's icon and sorted below reachable recipes. It is never hidden,
+    and the solver is unaffected.
+  </div>
+  <div class="foot">
+    <button id="milestonesAll" class="small ghost">All</button>
+    <button id="milestonesNone" class="small ghost">None</button>
+    <button id="milestonesDone">Done</button>
+  </div>
+</dialog>
 <script type="module" src="app.js"></script>
 </body>
 </html>

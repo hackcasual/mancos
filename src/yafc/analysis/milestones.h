@@ -36,6 +36,10 @@ class Milestones {
   MilestonesWarnings Compute(const Database& db, const Dependencies& deps,
                              const MilestonesInput& input);
 
+  // Rebuilds lockedMask for a new researched set without re-running the
+  // (expensive) accessibility walks; milestoneResult is independent of it.
+  void SetUnlocked(const std::unordered_set<const FactorioObject*>& unlocked);
+
   bool IsAccessible(FactorioId id) const { return milestoneResult.ById(id)[0]; }
   bool IsAccessible(const FactorioObject* obj) const { return IsAccessible(obj->id); }
   bool IsAccessibleWithCurrentMilestones(FactorioId id) const {
