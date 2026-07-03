@@ -1,5 +1,7 @@
 #include "yafc/serialization/database_dump.h"
 
+#include "yafc/serialization/icon_scale.h"
+
 #include <cmath>
 #include <stdexcept>
 #include <unordered_map>
@@ -737,6 +739,8 @@ BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
           fileForPath[part.path] = "";  // negative-cache
           it = fileForPath.find(part.path);
         } else {
+          // Crop mip strips + downscale to the web display budget.
+          bytes = DownscaleIconPng(bytes, 32);
           std::string zipName = "icons/" + std::to_string(iconFiles.size()) + ".png";
           stats.iconBytes += bytes.size();
           iconFiles.emplace_back(zipName, std::move(bytes));

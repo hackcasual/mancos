@@ -269,6 +269,17 @@ Recipe + status: `solver-wasm/README.md`.
    icons on nameplates. User project: 55 module rows apply, all 53 pages solve.
    Module UI is single-type fill; multi-entry templates from desktop are preserved and
    shown as chips. Next: per-slot module editor, module cost in candidate ranking.
+   Increment 6 (2026-07-03): bundle diet. Icons cropped to base mip + area-downscaled
+   to <=32px at bundle time (icon_scale.cc: stb_image decode, alpha-weighted box
+   filter, stb_image_write with miniz -9 deflate; third_party/stb vendored). Pyanodon
+   bundle regenerated with baked icon aliases: 41.9 -> 16.6 MB (icons 33.7 -> 8.3 MB),
+   web/dist 46 -> 22 MB; 0 missing icons, all icons square <=32px, browser-verified.
+   Format study (sharp/libvips over all 4899 icons): pngcrush-class recompress only
+   -6..9% (stb+miniz already competitive); WebP lossless -23%; WebP lossy q90 -48%
+   (~4 MB); AVIF q70 ~-41% (worse than WebP at 32px, plus Safari<16 concerns).
+   Verdict: skip libwebp integration for now. NEXT biggest lever: locale files are
+   6.33 MB = 40% of the bundle (55 languages) — split locales out of the bundle or
+   lazy-load only the browser language.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

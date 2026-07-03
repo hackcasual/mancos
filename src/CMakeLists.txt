@@ -18,12 +18,16 @@ add_library(yafc_core
   yafc/parser/property_tree.cc
   yafc/parser/zip_archive.cc
   yafc/serialization/database_dump.cc
+  yafc/serialization/icon_scale.cc
   yafc/serialization/serialization.cc
   yafc/model/production_table_solver.cc
   yafc/solver/lp.cc
   yafc/lua/lua_vm.cc
 )
 target_include_directories(yafc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# stb (icon_scale.cc only): single-header PNG codec for bundle icon scaling.
+target_include_directories(yafc_core PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/stb)
 target_link_libraries(yafc_core
   PRIVATE ortools::glop lua::lua miniz
   PUBLIC nlohmann_json::nlohmann_json
