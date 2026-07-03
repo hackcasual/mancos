@@ -21,6 +21,87 @@ float FuelConsumptionLimit(const EntityEnergy& energy, const Quality* quality) {
   return energy.baseFuelConsumptionLimit;
 }
 
+// Port of ModuleTemplate.GetModulesInfo + ModuleFillerParameters' fixed fill:
+// slot-fill the row's module list (fixedCount 0 = fill remaining slots),
+// falling back to the page's filler module; then beacon effects (template
+// beaconList counts are totals across beacons; beaconCount = ceil(total /
+// beacon slots)), falling back to the filler's beacon settings. Compatibility
+// respects both the entity's and the recipe's allowed effects/categories.
+void ApplyModules(const RecipeRow& row, const EntityCrafter& entity,
+                  const ModuleFillerParameters& filler, RecipeParameters& result) {
+  ModuleEffects& effects = result.activeEffects;
+  const auto* recipe = dynamic_cast<const Recipe*>(row.recipe);
+  auto accepts = [&](const Module* module) {
+    if (module == nullptr) return false;
+    if (!entity.CanAcceptModule(module->moduleSpecification)) return false;
+    if (recipe != nullptr &&
+        !EntityWithModules::CanAcceptModule(
+            module->moduleSpecification, recipe->allowedEffects,
+            recipe->allowedModuleCategories.empty() ? nullptr
+                                                    : &recipe->allowedModuleCategories)) {
+      return false;
+    }
+    return true;
+  };
+
+  if (entity.effectReceiver.usesModuleEffects) {
+    if (!row.modules.list.empty()) {
+      int remaining = entity.moduleSlots;
+      for (const RecipeRowCustomModule& cm : row.modules.list) {
+        if (remaining <= 0) break;
+        if (!accepts(cm.module)) continue;
+        int count = cm.fixedCount == 0 ? remaining : std::min(cm.fixedCount, remaining);
+        remaining -= count;
+        effects.AddModules(cm.module->moduleSpecification, static_cast<float>(count));
+        result.usedModules.push_back({cm.module, count});
+      }
+    } else if (filler.fillerModule != nullptr && entity.moduleSlots > 0 &&
+               accepts(filler.fillerModule) &&
+               (filler.fillMiners ||
+                !(row.recipe->flags & RecipeFlags::kUsesMiningProductivity))) {
+      effects.AddModules(filler.fillerModule->moduleSpecification,
+                         static_cast<float>(entity.moduleSlots));
+      result.usedModules.push_back({filler.fillerModule, entity.moduleSlots});
+    }
+  }
+
+  if (!entity.effectReceiver.usesBeaconEffects) return;
+  if (row.modules.beacon != nullptr) {
+    EntityBeacon* beacon = row.modules.beacon;
+    int totalModules = 0;
+    for (const RecipeRowCustomModule& bm : row.modules.beaconList) {
+      if (bm.module != nullptr && beacon->CanAcceptModule(bm.module->moduleSpecification)) {
+        totalModules += bm.fixedCount;
+      }
+    }
+    if (totalModules > 0 && beacon->moduleSlots > 0) {
+      int beaconCount = (totalModules - 1) / beacon->moduleSlots + 1;
+      float efficiency = beacon->beaconEfficiency * beacon->profile(beaconCount);
+      for (const RecipeRowCustomModule& bm : row.modules.beaconList) {
+        if (bm.module == nullptr ||
+            !beacon->CanAcceptModule(bm.module->moduleSpecification)) {
+          continue;
+        }
+        effects.AddModules(bm.module->moduleSpecification,
+                           efficiency * static_cast<float>(bm.fixedCount));
+      }
+      result.usedBeacon = beacon;
+      result.usedBeaconCount = beaconCount;
+    }
+  } else if (row.modules.empty() && filler.beacon != nullptr &&
+             filler.beaconModule != nullptr && filler.beaconsPerBuilding > 0 &&
+             filler.beacon->moduleSlots > 0 &&
+             filler.beacon->CanAcceptModule(filler.beaconModule->moduleSpecification)) {
+    int beaconCount = filler.beaconsPerBuilding;
+    float efficiency = filler.beacon->beaconEfficiency * filler.beacon->profile(beaconCount);
+    effects.AddModules(
+        filler.beaconModule->moduleSpecification,
+        efficiency * static_cast<float>(beaconCount * filler.beacon->moduleSlots));
+    result.usedBeacon = filler.beacon;
+    result.usedBeaconCount = beaconCount;
+  }
+}
+
 }  // namespace
 
 RecipeParameters RecipeParameters::Calculate(const RecipeRow& row,
@@ -124,12 +205,14 @@ RecipeParameters RecipeParameters::Calculate(const RecipeRow& row,
     warningFlags |= WarningFlags::kAsteroidCollectionNotModelled;
   }
 
-  // TODO(port): GetModulesInfo (module/beacon effects) once rows carry
-  // modules; activeEffects then starts from the filled module set.
   ModuleEffects& effects = result.activeEffects;
   effects.productivity += productivity;
   effects.speed += speed;
   effects.consumption += consumption;
+  // Upstream gates GetModulesInfo on the entity accepting any effect at all.
+  if (entity.target->allowedEffects != AllowedEffects::kNone) {
+    ApplyModules(row, *entity.target, settings.filler, result);
+  }
 
   if (auto* r = dynamic_cast<const Recipe*>(recipe);
       r != nullptr && r->maximumProductivity.has_value() &&

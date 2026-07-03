@@ -3,21 +3,53 @@
 // (crafting speed, quality, module/beacon speed), fuel use per building,
 // productivity (entity base + mining/research/tech-level bonuses, capped by
 // maximumProductivity), and warning flags. Generator rows (ScaleProduction-
-// WithPower) invert to energy terms like upstream.
+// WithPower) invert to energy terms like upstream. Includes the
+// ModuleTemplate.GetModulesInfo port (module slot fill + beacon effects) and
+// the fixed parts of ModuleFillerParameters (filler module, beacon fill;
+// autoFillPayback economics not ported).
 //
-// Not ported yet: GetModulesInfo (module/beacon fill — rows have no module
-// UI), UselessQuality (needs milestone access at parameter time).
+// Not ported yet: UselessQuality (needs milestone access at parameter time).
 #pragma once
 
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <vector>
 
 #include "yafc/model/data_classes.h"
 
 namespace yafc {
 
 class RecipeRow;
+
+// Upstream RecipeRowCustomModule: one module choice in a ModuleTemplate.
+// In `list`, fixedCount == 0 means "fill the remaining building slots"; in
+// `beaconList` fixedCount is the TOTAL module count across all beacons.
+struct RecipeRowCustomModule {
+  Module* module = nullptr;
+  int fixedCount = 0;
+};
+
+// Upstream ModuleTemplate: a row's explicit module/beacon configuration.
+struct ModuleTemplate {
+  std::vector<RecipeRowCustomModule> list;
+  EntityBeacon* beacon = nullptr;
+  std::vector<RecipeRowCustomModule> beaconList;
+
+  bool empty() const { return list.empty() && beacon == nullptr; }
+};
+
+// Upstream ModuleFillerParameters (page defaults applied to rows without an
+// explicit template). autoFillPayback is parsed for .yafc fidelity but the
+// payback economics are not applied.
+struct ModuleFillerParameters {
+  bool fillMiners = false;
+  float autoFillPayback = 0;
+  Module* fillerModule = nullptr;
+  EntityBeacon* beacon = nullptr;
+  Module* beaconModule = nullptr;
+  int beaconsPerBuilding = 8;
+};
 
 // Upstream WarningFlags (bit-compatible; extends the solver subset).
 struct WarningFlags {
@@ -49,6 +81,20 @@ struct ModuleEffects {
   float speedMod() const { return std::max(1.0f + speed, 0.2f); }
   float energyUsageMod() const { return std::max(1.0f + consumption, 0.2f); }
   float qualityMod() const { return std::max(quality, 0.0f); }
+
+  // Upstream AddModules (quality flattened to normal): count may be
+  // fractional for beacon-transmitted effects (efficiency x profile).
+  void AddModules(const ModuleSpecification& module, float count,
+                  uint32_t allowedEffects = AllowedEffects::kAll) {
+    if (allowedEffects & AllowedEffects::kSpeed) speed += module.baseSpeed * count;
+    if ((allowedEffects & AllowedEffects::kProductivity) && module.baseProductivity > 0) {
+      productivity += module.baseProductivity * count;
+    }
+    if (allowedEffects & AllowedEffects::kConsumption) {
+      consumption += module.baseConsumption * count;
+    }
+    if (allowedEffects & AllowedEffects::kQuality) quality += module.baseQuality * count;
+  }
 };
 
 // Upstream Project.current.settings subset that parameters read.
@@ -58,6 +104,8 @@ struct ProductionSettings {
   std::map<Technology*, int> productivityTechnologyLevels;
   // Upstream derives this from reactor-layout prefs; 1 = lone reactor.
   float reactorBonusMultiplier = 1;
+  // Page-level module defaults (upstream: ProductionTable.modules).
+  ModuleFillerParameters filler;
 };
 
 struct RecipeParameters {
@@ -65,6 +113,11 @@ struct RecipeParameters {
   float fuelUsagePerSecondPerBuilding = 0;
   ModuleEffects activeEffects;
   uint32_t warningFlags = 0;
+  // What actually got slotted (after compatibility filtering) — upstream
+  // UsedModule; drives the UI display.
+  std::vector<RecipeRowCustomModule> usedModules;
+  EntityBeacon* usedBeacon = nullptr;
+  int usedBeaconCount = 0;
 
   float productivity() const { return activeEffects.productivity; }
   float fuelUsagePerSecondPerRecipe() const {

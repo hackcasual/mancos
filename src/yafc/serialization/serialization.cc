@@ -22,6 +22,7 @@ class JsonWriter {
   bool Has(const char*) const { return false; }
   bool HasString(const char*) const { return false; }
   void Prop(const char* name, const bool& v) { out_[name] = v; }
+  void Prop(const char* name, const int& v) { out_[name] = v; }
   void Prop(const char* name, const float& v) { out_[name] = v; }
   void Prop(const char* name, const double& v) { out_[name] = v; }
   void Prop(const char* name, const std::string& v) {
@@ -75,6 +76,19 @@ class JsonWriter {
     out_[name] = std::move(arr);
   }
 
+  // Value-struct list (e.g. ModuleTemplate entries) — no factory needed.
+  template <typename T, typename VisitFn>
+  void PropStructList(const char* name, const std::vector<T>& items, VisitFn&& visit) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const T& item : items) {
+      nlohmann::json child = nlohmann::json::object();
+      JsonWriter writer(child);
+      visit(const_cast<T&>(item), writer);
+      arr.push_back(std::move(child));
+    }
+    out_[name] = std::move(arr);
+  }
+
  private:
   nlohmann::json& out_;
 };
@@ -93,6 +107,7 @@ class JsonReader {
     return it != in_.end() && it->is_string();
   }
   void Prop(const char* name, bool& v) { Read(name, v); }
+  void Prop(const char* name, int& v) { Read(name, v); }
   void Prop(const char* name, float& v) { Read(name, v); }
   void Prop(const char* name, double& v) { Read(name, v); }
   void Prop(const char* name, std::string& v) { Read(name, v); }
@@ -154,6 +169,20 @@ class JsonReader {
     }
   }
 
+  template <typename T, typename VisitFn>
+  void PropStructList(const char* name, std::vector<T>& items, VisitFn&& visit) {
+    auto it = in_.find(name);
+    if (it == in_.end() || !it->is_array()) return;
+    items.clear();
+    for (const auto& entry : *it) {
+      if (!entry.is_object()) continue;
+      T item{};
+      JsonReader reader(entry, db_, errors_);
+      visit(item, reader);
+      items.push_back(std::move(item));
+    }
+  }
+
  private:
   template <typename T>
   bool Read(const char* name, T& v) {
@@ -202,6 +231,31 @@ void VisitLink(ProductionLink& link, V& v) {
 }
 
 template <typename V>
+void VisitCustomModule(RecipeRowCustomModule& m, V& v) {
+  v.Prop("module", m.module);
+  v.Prop("fixedCount", m.fixedCount);
+}
+
+template <typename V>
+void VisitModuleTemplate(ModuleTemplate& t, V& v) {
+  auto visitModule = [](RecipeRowCustomModule& m, auto& vv) { VisitCustomModule(m, vv); };
+  v.PropStructList("list", t.list, visitModule);
+  v.Prop("beacon", t.beacon);
+  v.PropStructList("beaconList", t.beaconList, visitModule);
+}
+
+template <typename V>
+void VisitModuleFiller(ModuleFillerParameters& f, V& v) {
+  v.Prop("fillMiners", f.fillMiners);
+  v.Prop("autoFillPayback", f.autoFillPayback);
+  v.Prop("fillerModule", f.fillerModule);
+  v.Prop("beacon", f.beacon);
+  v.Prop("beaconModule", f.beaconModule);
+  v.Prop("beaconsPerBuilding", f.beaconsPerBuilding);
+  // Not ported: overrideCrafterBeacons (per-crafter beacon overrides).
+}
+
+template <typename V>
 void VisitRow(RecipeRow& row, V& v) {
   v.Prop("recipe", row.recipe);
   v.Prop("fuel", row.fuel);
@@ -209,6 +263,12 @@ void VisitRow(RecipeRow& row, V& v) {
   v.Prop("fixedBuildings", row.fixedBuildings);
   v.Prop("builtBuildings", row.builtBuildings);
   v.Prop("enabled", row.enabled);
+  auto visitTemplate = [](ModuleTemplate& t, auto& vv) { VisitModuleTemplate(t, vv); };
+  if constexpr (V::kReading) {
+    if (v.Has("modules")) v.PropObject("modules", row.modules, visitTemplate);
+  } else {
+    if (!row.modules.empty()) v.PropObject("modules", row.modules, visitTemplate);
+  }
   auto visitTable = [](ProductionTable& t, auto& vv) { VisitTable(t, vv); };
   if constexpr (V::kReading) {
     if (v.Has("subgroup")) {
@@ -222,6 +282,10 @@ void VisitRow(RecipeRow& row, V& v) {
 
 template <typename V>
 void VisitTable(ProductionTable& table, V& v) {
+  // Page-level module defaults (upstream ProductionTable.modules); only the
+  // root table's settings are consulted during Setup.
+  auto visitFiller = [](ModuleFillerParameters& f, auto& vv) { VisitModuleFiller(f, vv); };
+  v.PropObject("modules", table.settings.filler, visitFiller);
   v.PropList("links", table.links,
              [&table] {
                auto link = std::make_unique<ProductionLink>();

@@ -255,6 +255,20 @@ Recipe + status: `solver-wasm/README.md`.
    cells is a different chain; user's 53-page project: every page solves.
    Not ported yet: custom milestone sets ("Edit milestones" editor), tech progression
    settings dialog; temperature-variant fluid links (steam@250) can stay unmatched.
+   Increment 5 (2026-07-03): modules & beacons + row config (directive): ModuleTemplate/
+   GetModulesInfo port in recipe_parameters (slot fill with fixedCount-0 = fill-remaining,
+   entity+recipe CanAcceptModule filtering, beaconList totals -> ceil(total/slots) beacons,
+   beaconEfficiency x profile(N) — validated against Factorio 2.0 1/sqrt(N) profiles),
+   ModuleFillerParameters (page defaults: fillerModule + beacon fill; autoFillPayback
+   economics NOT ported), usedModules/usedBeacon echo for UI. Serialization: row
+   "modules" + table "modules" (filler) round-trip .yafc (overrideCrafterBeacons not
+   ported). Web API: tableAddRecipe(tdn, configJson), rowOptions (crafters/fuels/
+   compatible modules/beacons+their modules), setDefaults (favorites = default
+   building/fuel pick), tableSetFiller. UI: row-config <dialog> on every plate (building/
+   fuel/module-fill/beacon sections, ☆ favorites persisted per bundle), module+beacon
+   icons on nameplates. User project: 55 module rows apply, all 53 pages solve.
+   Module UI is single-type fill; multi-entry templates from desktop are preserved and
+   shown as chips. Next: per-slot module editor, module cost in candidate ranking.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

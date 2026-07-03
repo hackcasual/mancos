@@ -179,14 +179,20 @@ function renderPageTabs() {
 async function rebuildAndSolve() {
   persist();
   await rpc('tableClear');
+  const filler = pages[activePage].filler;
+  if (filler) await rpc('tableSetFiller', JSON.stringify(filler));
   // Table units are per SECOND (desktop yafc compatible); UI shows /min.
   for (const goal of goals) await rpc('tableAddLink', goal.tdn, goal.perMin / 60);
   for (const tdn of linked) await rpc('tableAddLink', tdn, 0);
-  // Rows carry per-project entity/fuel choices ('' = desktop-style defaults):
-  // a reactor burning mox vs uranium cells is a different production chain.
+  // Rows carry per-project choices ('' / missing = favorite-or-first
+  // defaults): a reactor burning mox vs uranium cells is a different chain.
   for (const row of rows) {
-    await rpc('tableAddRecipe', row.tdn, (row.fixed ?? 0) / 60,
-              row.entity ?? '', row.fuel ?? '');
+    await rpc('tableAddRecipe', row.tdn, JSON.stringify({
+      fixed: (row.fixed ?? 0) / 60,
+      entity: row.entity ?? '',
+      fuel: row.fuel ?? '',
+      modules: row.modules,
+    }));
   }
   renderSolve(await rpc('tableSolve'));
 }
@@ -251,14 +257,23 @@ async function renderSolve(result) {
         `<button class="flow chip ${f.perMin >= 0 ? 'pos' : 'neg'}" data-goods="${f.tdn}"` +
         ` title="${esc(f.tdn)}">${await iconImg(f.tdn)}` +
         `${fmt(f.perMin * 60)}</button>`))).join('');
-    const entity = row.entity && row.entity.tdn ? `<span class="entity" title="${esc(row.entity.locName)}">` +
+    const entity = row.entity && row.entity.tdn ? `<button class="entity chip" data-config="${i}"` +
+        ` title="${esc(row.entity.locName)} — click to change building, fuel, modules">` +
         `${await iconImg(row.entity.tdn)}<span class="amt">×${fmt(row.buildings)}</span>` +
         `${row.entity.powerMw > 0 ? `<span class="muted amt">${fmt(row.entity.powerMw * row.buildings * 1000)}kW</span>` : ''}` +
-        `</span>` : '';
+        `</button>` :
+        `<button class="cfg" data-config="${i}" title="Configure building, fuel, modules">⚙</button>`;
+    const mods = (await Promise.all((row.modules ?? []).map(async (m) =>
+        `<span title="${esc(m.locName)} ×${m.count}">${await iconImg(m.tdn)}` +
+        `${m.count > 1 ? `<small>${m.count}</small>` : ''}</span>`))).join('');
+    const beacon = row.beacon && row.beacon.tdn
+        ? `<span title="${esc(row.beacon.locName)} ×${row.beacon.count}">` +
+          `${await iconImg(row.beacon.tdn)}<small>${row.beacon.count}</small></span>` : '';
     return `<div class="plate${row.warnings & WARN_ALARM ? ' warn' : ''}">
       <div class="head">${await iconImg(row.recipe.tdn)}
         <span class="name" title="${esc(row.recipe.tdn)}">${esc(row.recipe.locName)}</span>
         ${entity}
+        ${mods || beacon ? `<span class="mods">${mods}${beacon}</span>` : ''}
         ${row.warnings ? `<span title="${esc(warningText(row.warnings))}">⚠</span>` : ''}
         <button class="crafts${rows[i]?.fixed ? ' pinned' : ''}" data-pin="${i}"
           title="${rows[i]?.fixed ? 'Rate pinned — click to change/unpin' : 'Click to pin this rate'}">
@@ -271,6 +286,9 @@ async function renderSolve(result) {
   $('#rows').innerHTML = plates.join('');
   for (const btn of $('#rows').querySelectorAll('[data-row-x]')) {
     btn.onclick = () => { rows.splice(+btn.dataset.rowX, 1); rebuildAndSolve(); };
+  }
+  for (const btn of $('#rows').querySelectorAll('[data-config]')) {
+    btn.onclick = () => openRowConfig(+btn.dataset.config);
   }
   for (const btn of $('#rows').querySelectorAll('[data-pin]')) {
     btn.onclick = () => {
@@ -469,7 +487,8 @@ async function applyLoadedProject(state) {
     name: p.name || `Page ${i + 1}`,
     goals: p.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin })),
     linked: p.linked,
-    rows: p.rows,
+    rows: p.rows,          // rows keep entity/fuel/modules mirrors verbatim
+    filler: p.filler,      // page-level module defaults, if any
   }));
   activePage = 0;
   bindActivePage();
@@ -678,6 +697,185 @@ function renderTechs(list) {
   }
 }
 
+// ---- row config: building / fuel / modules / beacons + ☆ defaults ----
+// Favorites are the "default building/fuel" mechanism (desktop: starred
+// objects float to the top and win default picks). Per-bundle persisted.
+let favorites = new Set();
+
+async function pushFavorites() {
+  await rpc('setDefaults', JSON.stringify({ favorites: [...favorites] }));
+  if (bundleKey) {
+    localStorage.setItem(bundleKey + ':favorites', JSON.stringify([...favorites]));
+  }
+}
+
+let rowConfig = null;  // working copy while the dialog is open
+
+async function openRowConfig(i) {
+  const row = rows[i];
+  if (!row) return;
+  const modules = row.modules ?? {};
+  rowConfig = {
+    rowIndex: i,
+    recipeTdn: row.tdn,
+    entity: row.entity ?? '',
+    fuel: row.fuel ?? '',
+    list: (modules.list ?? []).map((m) => ({ ...m })),
+    beacon: modules.beacon ?? '',
+    beaconList: (modules.beaconList ?? []).map((m) => ({ ...m })),
+  };
+  await renderRowConfig();
+  $('#rowDialog').showModal();
+}
+
+async function renderRowConfig() {
+  const opts = await rpc('rowOptions', rowConfig.recipeTdn, rowConfig.entity || '');
+  if (opts.error) { status(opts.error); return; }
+  rowConfig.entity = opts.entity ?? '';
+  const effectiveFuel = rowConfig.fuel ||
+      (opts.fuels.find((f) => f.favorite) ?? opts.fuels[0])?.tdn || '';
+
+  const star = (o) =>
+      `<button class="fav${o.favorite ? ' on' : ''}" data-fav="${o.tdn}"
+         title="${o.favorite ? 'Unset default' : 'Set as default'}"
+         aria-label="Toggle default">${o.favorite ? '★' : '☆'}</button>`;
+  const optRow = async (o, kind, sel, meta) =>
+      `<div style="display:flex;align-items:center">${star(o)}
+       <button class="opt${sel ? ' sel' : ''}" data-${kind}="${o.tdn}">
+         ${await iconImg(o.tdn)}<span>${esc(o.locName)}</span>
+         <span class="meta">${meta}</span></button></div>`;
+
+  const crafters = (await Promise.all(opts.crafters.map((c) =>
+      optRow(c, 'pick-entity', c.tdn === rowConfig.entity,
+             `×${c.speed}${c.moduleSlots ? ` · ${c.moduleSlots} slots` : ''}` +
+             `${c.powerMw > 0 ? ` · ${fmt(c.powerMw * 1000)}kW` : ''}`)))).join('');
+  const fuels = (await Promise.all(opts.fuels.map((f) =>
+      optRow(f, 'pick-fuel', f.tdn === effectiveFuel, `${f.fuelValue}MJ`)))).join('');
+
+  // Modules: current template as chips; one-click "fill all slots" choices.
+  const chips = (await Promise.all(rowConfig.list.map(async (m, idx) =>
+      `<span class="pill">${await iconImg(m.tdn)}
+        <span class="amt">${m.count === 0 ? 'fill' : '×' + m.count}</span>
+        <button class="x" data-mod-x="${idx}" aria-label="Remove module">✕</button></span>`)))
+      .join('');
+  const moduleButtons = (await Promise.all(opts.modules.map((m) =>
+      optRow(m, 'pick-module',
+             rowConfig.list.length === 1 && rowConfig.list[0].tdn === m.tdn &&
+             rowConfig.list[0].count === 0,
+             [m.speed ? `spd${m.speed > 0 ? '+' : ''}${Math.round(m.speed * 100)}%` : '',
+              m.productivity ? `prod+${Math.round(m.productivity * 100)}%` : '',
+              m.consumption ? `enrg${m.consumption > 0 ? '+' : ''}${Math.round(m.consumption * 100)}%` : '']
+              .filter(Boolean).join(' '))))).join('');
+
+  const beacons = (await Promise.all(opts.beacons.map((b) =>
+      optRow(b, 'pick-beacon', b.tdn === rowConfig.beacon,
+             `${b.moduleSlots} slots · eff ${b.efficiency}`)))).join('');
+  const selectedBeacon = opts.beacons.find((b) => b.tdn === rowConfig.beacon);
+  const beaconModuleButtons = selectedBeacon
+      ? (await Promise.all(selectedBeacon.modules.map((m) =>
+          optRow(m, 'pick-beacon-module',
+                 rowConfig.beaconList.length > 0 && rowConfig.beaconList[0].tdn === m.tdn,
+                 '')))).join('')
+      : '';
+  const beaconTotal = rowConfig.beaconList[0]?.count ?? 0;
+
+  $('#rowDialogBody').innerHTML = `
+    <div class="eyebrow">Building</div><div class="opts">${crafters}</div>
+    ${opts.hasEnergy && opts.fuels.length ? `<div class="eyebrow">Fuel</div><div class="opts">${fuels}</div>` : ''}
+    ${opts.moduleSlots > 0 ? `
+      <div class="eyebrow">Modules — ${opts.moduleSlots} slots</div>
+      ${rowConfig.list.length ? `<div class="chips">${chips}</div>` : ''}
+      <div class="opts">
+        <div style="display:flex;align-items:center"><span class="fav"></span>
+          <button class="opt${rowConfig.list.length === 0 ? ' sel' : ''}" data-pick-module="">
+          <span style="width:22px"></span><span>No modules</span></button></div>
+        ${moduleButtons}</div>` : ''}
+    ${opts.beacons.length ? `
+      <div class="eyebrow">Beacons</div>
+      <div class="opts">
+        <div style="display:flex;align-items:center"><span class="fav"></span>
+          <button class="opt${!rowConfig.beacon ? ' sel' : ''}" data-pick-beacon="">
+          <span style="width:22px"></span><span>No beacons</span></button></div>
+        ${beacons}</div>
+      ${selectedBeacon ? `
+        <div class="opts">${beaconModuleButtons}</div>
+        <label class="row">Total beacon modules
+          <input type="number" id="beaconTotal" min="0" step="1" value="${beaconTotal}">
+          <span class="muted">= ${Math.ceil(beaconTotal / (selectedBeacon.moduleSlots || 1))} beacons</span>
+        </label>` : ''}` : ''}`;
+
+  const body = $('#rowDialogBody');
+  for (const btn of body.querySelectorAll('[data-fav]')) {
+    btn.onclick = async () => {
+      favorites.has(btn.dataset.fav) ? favorites.delete(btn.dataset.fav)
+                                     : favorites.add(btn.dataset.fav);
+      await pushFavorites();
+      renderRowConfig();
+    };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-entity]')) {
+    btn.onclick = () => {
+      rowConfig.entity = btn.dataset.pickEntity;
+      rowConfig.fuel = '';  // re-derive for the new building
+      renderRowConfig();
+    };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-fuel]')) {
+    btn.onclick = () => { rowConfig.fuel = btn.dataset.pickFuel; renderRowConfig(); };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-module]')) {
+    btn.onclick = () => {
+      // One module type filling all slots (count 0 = fill remaining).
+      rowConfig.list = btn.dataset.pickModule
+          ? [{ tdn: btn.dataset.pickModule, count: 0 }] : [];
+      renderRowConfig();
+    };
+  }
+  for (const btn of body.querySelectorAll('[data-mod-x]')) {
+    btn.onclick = () => { rowConfig.list.splice(+btn.dataset.modX, 1); renderRowConfig(); };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-beacon]')) {
+    btn.onclick = () => {
+      rowConfig.beacon = btn.dataset.pickBeacon;
+      if (!rowConfig.beacon) rowConfig.beaconList = [];
+      renderRowConfig();
+    };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-beacon-module]')) {
+    btn.onclick = () => {
+      const count = rowConfig.beaconList[0]?.count ||
+          (selectedBeacon ? selectedBeacon.moduleSlots : 2);
+      rowConfig.beaconList = [{ tdn: btn.dataset.pickBeaconModule, count }];
+      renderRowConfig();
+    };
+  }
+  const total = $('#beaconTotal');
+  if (total) {
+    total.onchange = () => {
+      const count = Math.max(0, Math.round(+total.value || 0));
+      if (rowConfig.beaconList[0]) rowConfig.beaconList[0].count = count;
+    };
+  }
+}
+
+$('#rowDialogApply').onclick = () => {
+  const row = rows[rowConfig.rowIndex];
+  if (row) {
+    row.entity = rowConfig.entity || undefined;
+    row.fuel = rowConfig.fuel || undefined;
+    const template = {
+      list: rowConfig.list,
+      beacon: rowConfig.beacon || undefined,
+      beaconList: rowConfig.beacon ? rowConfig.beaconList.filter((m) => m.count > 0) : [],
+    };
+    if (template.list.length || template.beacon) row.modules = template;
+    else delete row.modules;
+    rebuildAndSolve();
+  }
+  $('#rowDialog').close();
+};
+$('#rowDialogCancel').onclick = () => $('#rowDialog').close();
+
 // ---- milestones (desktop "Milestones" dialog) ----
 let milestones = [];  // [{tdn, locName, unlocked}] in discovery order
 
@@ -791,6 +989,10 @@ async function loadBundleBuffer(buffer, label, packId) {
   } catch { research = { filter: false, techs: [] }; }
   await pushResearch();
   $('#researchFilter').checked = research.filter;
+  try {
+    favorites = new Set(JSON.parse(localStorage.getItem(bundleKey + ':favorites')) ?? []);
+  } catch { favorites = new Set(); }
+  if (favorites.size) await pushFavorites();
   const languages = await rpc('listLanguages');
   if (Array.isArray(languages) && languages.length > 0) {
     const lang = pickLanguage(languages);

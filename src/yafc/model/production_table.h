@@ -73,6 +73,7 @@ class RecipeRow {
   ObjectWithQuality<EntityCrafter> entity;  // chosen crafter (null = unspecified)
   double baseCost = 1.0;  // upstream: recipe.RecipeBaseCost() from CostAnalysis
   QualityGoods fuel;      // optional; consumes fuelUsagePerSecondPerRecipe per craft
+  ModuleTemplate modules;  // explicit module/beacon config (empty = filler defaults)
   RecipeParameters parameters;
   std::unique_ptr<ProductionTable> subgroup;  // nested table (this row is its header)
 

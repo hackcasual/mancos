@@ -187,6 +187,88 @@ TEST_CASE("crafter speed, power and fuel drive recipe parameters") {
   CHECK(foundPower);
 }
 
+TEST_CASE("modules and beacons: slot fill, compatibility, beacon profile math") {
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Item* plate = Add<Item>(objects, "plate");
+  auto* speedModule = Add<Module>(objects, "speed-module");
+  speedModule->moduleSpecification.baseSpeed = 0.5f;
+  speedModule->moduleSpecification.baseConsumption = 0.7f;
+  auto* prodModule = Add<Module>(objects, "prod-module");
+  prodModule->moduleSpecification.baseProductivity = 0.1f;
+  prodModule->moduleSpecification.baseSpeed = -0.15f;
+  Recipe* smelt = Add<Recipe>(objects, "smelt");
+  smelt->time = 4;
+  smelt->allowedEffects = AllowedEffects::kAll;
+  smelt->ingredients.emplace_back(ore, 1.0f);
+  smelt->products.emplace_back(plate, 1.0f);
+  Recipe* noProd = Add<Recipe>(objects, "no-prod");
+  noProd->time = 4;
+  noProd->allowedEffects = AllowedEffects::kSpeed | AllowedEffects::kConsumption;
+  noProd->ingredients.emplace_back(ore, 1.0f);
+  noProd->products.emplace_back(plate, 1.0f);
+  auto* furnace = Add<EntityCrafter>(objects, "furnace");
+  furnace->allowedEffects = AllowedEffects::kAll;
+  furnace->moduleSlots = 2;
+  auto* beacon = Add<EntityBeacon>(objects, "beacon");
+  beacon->allowedEffects = AllowedEffects::kSpeed | AllowedEffects::kConsumption;
+  beacon->moduleSlots = 2;
+  beacon->beaconEfficiency = 0.5f;
+  beacon->profileValues = {1.0f, 0.8f};
+  Database db;
+  db.LoadBuiltData(std::move(objects));
+
+  ProductionTable root;
+  root.AddLink({ore, nullptr});
+  root.AddLink({plate, nullptr}, 11);
+  RecipeRow* row = root.AddRecipe(smelt);
+  row->entity = {furnace, nullptr};
+  // 1 fixed prod module + speed module filling the remaining slot.
+  row->modules.list = {{prodModule, 1}, {speedModule, 0}};
+
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  // speed = 0.5 - 0.15 = 0.35 -> recipeTime = 4 / 1.35; productivity 0.1.
+  CHECK(row->parameters.activeEffects.speed == doctest::Approx(0.35f));
+  CHECK(row->parameters.activeEffects.productivity == doctest::Approx(0.1f));
+  CHECK(row->parameters.recipeTime == doctest::Approx(4.0f / 1.35f));
+  // 11 plates/s at 1.1 plates per craft -> 10 crafts/s.
+  CHECK(row->recipesPerSecond == doctest::Approx(10));
+  REQUIRE(row->parameters.usedModules.size() == 2);
+  CHECK(row->parameters.usedModules[0].module == prodModule);
+  CHECK(row->parameters.usedModules[0].fixedCount == 1);
+  CHECK(row->parameters.usedModules[1].fixedCount == 1);
+
+  // Productivity module is rejected by a recipe that disallows productivity;
+  // the speed module then fills both slots.
+  row->recipe = noProd;
+  row->modules.list = {{prodModule, 1}, {speedModule, 0}};
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  CHECK(row->parameters.activeEffects.productivity == doctest::Approx(0.0f));
+  CHECK(row->parameters.activeEffects.speed == doctest::Approx(1.0f));
+  REQUIRE(row->parameters.usedModules.size() == 1);
+  CHECK(row->parameters.usedModules[0].module == speedModule);
+  CHECK(row->parameters.usedModules[0].fixedCount == 2);
+
+  // Beacons: 4 speed modules across 2-slot beacons -> 2 beacons, profile 0.8,
+  // efficiency 0.5 -> speed += 0.5 * 0.8 * 4 * 0.5 = 0.8.
+  row->recipe = smelt;
+  row->modules.list.clear();
+  row->modules.beacon = beacon;
+  row->modules.beaconList = {{speedModule, 4}};
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  CHECK(row->parameters.activeEffects.speed == doctest::Approx(0.8f));
+  CHECK(row->parameters.usedBeacon == beacon);
+  CHECK(row->parameters.usedBeaconCount == 2);
+
+  // Filler defaults apply when the row has no explicit template.
+  row->modules = {};
+  root.settings.filler.fillerModule = speedModule;
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  CHECK(row->parameters.activeEffects.speed == doctest::Approx(1.0f));
+  REQUIRE(row->parameters.usedModules.size() == 1);
+  CHECK(row->parameters.usedModules[0].fixedCount == 2);
+}
+
 // Nuclear-style loop: a reactor burns fuel cells (fuel, not ingredient) into
 // spent cells, which reprocessing recovers into part of the ore that new
 // cells are made from. Without the spent-fuel product the loop deadlocks.

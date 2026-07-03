@@ -107,6 +107,47 @@ TEST_CASE("project round-trips through .yafc-shaped JSON") {
   CHECK(header.recipesPerSecond == doctest::Approx(30));
 }
 
+TEST_CASE("row module templates and page filler round-trip") {
+  SerWorld w;
+  // Extra objects for this case only: a module and a beacon.
+  Database db;
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Recipe* mine = Add<Recipe>(objects, "mine");
+  mine->products.emplace_back(ore, 1.0f);
+  auto* speedModule = Add<Module>(objects, "speed-module");
+  speedModule->moduleSpecification.baseSpeed = 0.5f;
+  auto* beacon = Add<EntityBeacon>(objects, "beacon");
+  beacon->moduleSlots = 2;
+  db.LoadBuiltData(std::move(objects));
+
+  auto project = std::make_unique<Project>();
+  auto page = std::make_unique<ProjectPage>();
+  page->name = "Modules";
+  RecipeRow* row = page->content.AddRecipe(mine);
+  row->modules.list = {{speedModule, 0}};
+  row->modules.beacon = beacon;
+  row->modules.beaconList = {{speedModule, 4}};
+  page->content.settings.filler.fillerModule = speedModule;
+  page->content.settings.filler.beaconsPerBuilding = 12;
+  project->pages.push_back(std::move(page));
+
+  std::string text = SaveProjectToString(*project);
+  LoadResult loaded = LoadProjectFromString(text, db);
+  REQUIRE(loaded.project != nullptr);
+  RecipeRow& reloaded = *loaded.project->pages[0]->content.recipes[0];
+  REQUIRE(reloaded.modules.list.size() == 1);
+  CHECK(reloaded.modules.list[0].module == speedModule);
+  CHECK(reloaded.modules.list[0].fixedCount == 0);
+  CHECK(reloaded.modules.beacon == beacon);
+  REQUIRE(reloaded.modules.beaconList.size() == 1);
+  CHECK(reloaded.modules.beaconList[0].fixedCount == 4);
+  const ModuleFillerParameters& filler =
+      loaded.project->pages[0]->content.settings.filler;
+  CHECK(filler.fillerModule == speedModule);
+  CHECK(filler.beaconsPerBuilding == 12);
+}
+
 TEST_CASE("unknown properties and unresolvable references degrade gracefully") {
   SerWorld w;
   const char* text = R"({

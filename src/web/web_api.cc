@@ -32,6 +32,9 @@ std::unique_ptr<Bundle> g_bundle;
 std::unique_ptr<ProductionTable> g_table;
 std::unordered_set<const Technology*> g_researched;
 bool g_researchFilter = false;
+// Favorite buildings/fuels/modules (user "defaults"): first favorite among a
+// candidate list wins over data order when a row doesn't pin a choice.
+std::unordered_set<const FactorioObject*> g_favorites;
 
 // Milestone gating (desktop Milestones dialog). Computed lazily: the walks
 // cost a few flood fills over the whole database, so tests/smokes that never
@@ -155,6 +158,7 @@ static std::string loadBundlePtr(unsigned ptr, unsigned length) {
     g_deps.reset();
     g_milestones.reset();
     g_unlockedMilestones.clear();
+    g_favorites.clear();
     return json{{"objects", Db().objects.count()},
                 {"recipes", Db().recipes.count()},
                 {"items", Db().items.count()},
@@ -213,36 +217,176 @@ static std::string tableAddLink(std::string tdn, double amountPerMinute) {
   return json{{"ok", true}}.dump();
 }
 
-// fixedCraftsPerSecond > 0 pins the row's rate (recipeTime defaults to 1 in
-// the parameters seam, so fixedBuildings == crafts/second). entityTdn/fuelTdn
-// carry a project's per-row choices; empty picks the desktop-style defaults
-// (first crafter, its first fuel). A project's fuel choice matters: a reactor
+// First favorite in a candidate list, else the first entry (desktop default:
+// data order until the user stars a preference).
+template <typename T>
+T* PickDefault(const std::vector<T*>& candidates) {
+  for (T* c : candidates) {
+    if (g_favorites.count(c)) return c;
+  }
+  return candidates.empty() ? nullptr : candidates[0];
+}
+
+std::vector<RecipeRowCustomModule> ParseModuleList(const json& arr) {
+  std::vector<RecipeRowCustomModule> list;
+  if (!arr.is_array()) return list;
+  for (const json& e : arr) {
+    auto* module = dynamic_cast<Module*>(Db().FindByTypeDotName(e.value("tdn", "")));
+    if (module != nullptr) list.push_back({module, e.value("count", 0)});
+  }
+  return list;
+}
+
+json ModuleListJson(const std::vector<RecipeRowCustomModule>& list) {
+  json arr = json::array();
+  for (const RecipeRowCustomModule& m : list) {
+    arr.push_back(json{{"tdn", m.module->typeDotName()}, {"count", m.fixedCount}});
+  }
+  return arr;
+}
+
+// Row configuration: {"fixed": crafts/s, "entity": tdn, "fuel": tdn,
+// "modules": {"list": [{tdn,count}], "beacon": tdn, "beaconList": [...]}}.
+// Empty/missing fields pick defaults: favorite-or-first crafter, its
+// favorite-or-first fuel. A project's per-row choices matter: a reactor
 // burning mox vs uranium cells produces different spent fuel.
-static std::string tableAddRecipe(std::string tdn, double fixedCraftsPerSecond,
-                                  std::string entityTdn, std::string fuelTdn) {
+static std::string tableAddRecipe(std::string tdn, std::string configJson) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* r = dynamic_cast<RecipeOrTechnology*>(Db().FindByTypeDotName(tdn));
   if (r == nullptr) return Err("unknown recipe " + tdn);
+  json config = json::parse(configJson, nullptr, false);
+  if (config.is_discarded() || !config.is_object()) config = json::object();
+
   RecipeRow* row = g_table->AddRecipe(r);
-  if (fixedCraftsPerSecond > 0) {
-    row->fixedRate = static_cast<float>(fixedCraftsPerSecond);
-  }
-  EntityCrafter* entity = nullptr;
-  if (!entityTdn.empty()) {
-    entity = dynamic_cast<EntityCrafter*>(Db().FindByTypeDotName(entityTdn));
-  }
-  if (entity == nullptr && !r->crafters.empty()) entity = r->crafters[0];
+  double fixed = config.value("fixed", 0.0);
+  if (fixed > 0) row->fixedRate = static_cast<float>(fixed);
+
+  auto* entity = dynamic_cast<EntityCrafter*>(
+      Db().FindByTypeDotName(config.value("entity", "")));
+  if (entity == nullptr) entity = PickDefault(r->crafters);
   if (entity != nullptr) row->entity = {entity, Db().qualityNormal};
-  Goods* fuel = nullptr;
-  if (!fuelTdn.empty()) {
-    fuel = dynamic_cast<Goods*>(Db().FindByTypeDotName(fuelTdn));
-  }
-  if (fuel == nullptr && entity != nullptr && entity->hasEnergy &&
-      !entity->energy.fuels.empty()) {
-    fuel = entity->energy.fuels[0];
+
+  auto* fuel = dynamic_cast<Goods*>(Db().FindByTypeDotName(config.value("fuel", "")));
+  if (fuel == nullptr && entity != nullptr && entity->hasEnergy) {
+    fuel = PickDefault(entity->energy.fuels);
   }
   if (fuel != nullptr) row->fuel = {fuel, nullptr};
+
+  if (const json& modules = config["modules"]; modules.is_object()) {
+    row->modules.list = ParseModuleList(modules.value("list", json::array()));
+    row->modules.beacon = dynamic_cast<EntityBeacon*>(
+        Db().FindByTypeDotName(modules.value("beacon", "")));
+    row->modules.beaconList = ParseModuleList(modules.value("beaconList", json::array()));
+  }
   return json{{"ok", true}, {"recipe", RecipeBrief(r)}}.dump();
+}
+
+// Page-level module defaults, applied to rows without an explicit template.
+// Input: {"fillerModule": tdn, "beacon": tdn, "beaconModule": tdn,
+// "beaconsPerBuilding": n, "fillMiners": bool}.
+static std::string tableSetFiller(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) return Err("bad request");
+  ModuleFillerParameters& filler = g_table->settings.filler;
+  filler = {};
+  filler.fillMiners = parsed.value("fillMiners", false);
+  filler.fillerModule = dynamic_cast<Module*>(
+      Db().FindByTypeDotName(parsed.value("fillerModule", "")));
+  filler.beacon = dynamic_cast<EntityBeacon*>(
+      Db().FindByTypeDotName(parsed.value("beacon", "")));
+  filler.beaconModule = dynamic_cast<Module*>(
+      Db().FindByTypeDotName(parsed.value("beaconModule", "")));
+  filler.beaconsPerBuilding = parsed.value("beaconsPerBuilding", 8);
+  return json{{"ok", true}}.dump();
+}
+
+// Favorites double as defaults (desktop: starred objects float to the top
+// and win the default pick). Input: {"favorites": [tdn...]}.
+static std::string setDefaults(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded()) return Err("bad request");
+  g_favorites.clear();
+  for (const auto& tdn : parsed.value("favorites", std::vector<std::string>())) {
+    if (FactorioObject* obj = Db().FindByTypeDotName(tdn)) g_favorites.insert(obj);
+  }
+  return json{{"ok", true}, {"count", g_favorites.size()}}.dump();
+}
+
+// Everything the row-config dialog needs: crafter candidates for the recipe,
+// fuel candidates for the (chosen or default) crafter, modules compatible
+// with recipe+crafter, and beacons with their compatible modules.
+static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  auto* r = dynamic_cast<RecipeOrTechnology*>(Db().FindByTypeDotName(recipeTdn));
+  if (r == nullptr) return Err("unknown recipe " + recipeTdn);
+  auto* entity = dynamic_cast<EntityCrafter*>(Db().FindByTypeDotName(entityTdn));
+  if (entity == nullptr) entity = PickDefault(r->crafters);
+
+  auto brief = [](const FactorioObject* o, json extra = json::object()) {
+    extra["tdn"] = o->typeDotName();
+    extra["locName"] = o->locName;
+    extra["cost"] = CostOf(o);
+    extra["favorite"] = g_favorites.count(o) != 0;
+    return extra;
+  };
+
+  json crafters = json::array();
+  for (EntityCrafter* c : r->crafters) {
+    crafters.push_back(brief(c, json{{"speed", c->baseCraftingSpeed},
+                                     {"moduleSlots", c->moduleSlots},
+                                     {"powerMw", c->basePower},
+                                     {"selected", c == entity}}));
+  }
+
+  json fuels = json::array();
+  if (entity != nullptr && entity->hasEnergy) {
+    for (Goods* fuel : entity->energy.fuels) {
+      fuels.push_back(brief(fuel, json{{"fuelValue", fuel->fuelValue}}));
+    }
+  }
+
+  const auto* recipe = dynamic_cast<const Recipe*>(r);
+  auto recipeAccepts = [&](const Module* m) {
+    return recipe == nullptr ||
+           EntityWithModules::CanAcceptModule(
+               m->moduleSpecification, recipe->allowedEffects,
+               recipe->allowedModuleCategories.empty()
+                   ? nullptr
+                   : &recipe->allowedModuleCategories);
+  };
+  json modules = json::array();
+  if (entity != nullptr && entity->moduleSlots > 0) {
+    for (Module* m : Db().allModules) {
+      if (!entity->CanAcceptModule(m->moduleSpecification) || !recipeAccepts(m)) continue;
+      const ModuleSpecification& spec = m->moduleSpecification;
+      modules.push_back(brief(m, json{{"speed", spec.baseSpeed},
+                                      {"productivity", spec.baseProductivity},
+                                      {"consumption", spec.baseConsumption}}));
+    }
+  }
+
+  json beacons = json::array();
+  for (EntityBeacon* b : Db().allBeacons) {
+    json beaconModules = json::array();
+    for (Module* m : Db().allModules) {
+      if (b->CanAcceptModule(m->moduleSpecification)) {
+        beaconModules.push_back(brief(m));
+      }
+    }
+    beacons.push_back(brief(b, json{{"moduleSlots", b->moduleSlots},
+                                    {"efficiency", b->beaconEfficiency},
+                                    {"modules", std::move(beaconModules)}}));
+  }
+
+  return json{{"entity", entity != nullptr ? json(entity->typeDotName()) : json()},
+              {"hasEnergy", entity != nullptr && entity->hasEnergy},
+              {"moduleSlots", entity != nullptr ? entity->moduleSlots : 0},
+              {"crafters", std::move(crafters)},
+              {"fuels", std::move(fuels)},
+              {"modules", std::move(modules)},
+              {"beacons", std::move(beacons)}}.dump();
 }
 
 static std::string tableSolve() {
@@ -284,10 +428,24 @@ static std::string tableSolve() {
                     {"locName", row->entity.target->locName},
                     {"powerMw", perBuildingMW}};
     }
+    json usedModules = json::array();
+    for (const RecipeRowCustomModule& m : row->parameters.usedModules) {
+      usedModules.push_back(json{{"tdn", m.module->typeDotName()},
+                                 {"locName", m.module->locName},
+                                 {"count", m.fixedCount}});
+    }
+    json usedBeacon;
+    if (row->parameters.usedBeacon != nullptr) {
+      usedBeacon = json{{"tdn", row->parameters.usedBeacon->typeDotName()},
+                        {"locName", row->parameters.usedBeacon->locName},
+                        {"count", row->parameters.usedBeaconCount}};
+    }
     rows.push_back(json{{"recipe", RecipeBrief(row->recipe)},
                         {"craftsPerMin", row->recipesPerSecond},
                         {"buildings", row->buildingCount()},
                         {"entity", std::move(entity)},
+                        {"modules", std::move(usedModules)},
+                        {"beacon", std::move(usedBeacon)},
                         {"warnings", row->parameters.warningFlags},
                         {"flows", std::move(flows)}});
   }
@@ -475,6 +633,26 @@ static std::string projectSaveAll(std::string pagesJson) {
               Db().FindByTypeDotName(row.value("entity", "")))) {
         added->entity = {entity, Db().qualityNormal};
       }
+      if (row.contains("modules") && row["modules"].is_object()) {
+        const json& modules = row["modules"];
+        added->modules.list = ParseModuleList(modules.value("list", json::array()));
+        added->modules.beacon = dynamic_cast<EntityBeacon*>(
+            Db().FindByTypeDotName(modules.value("beacon", "")));
+        added->modules.beaconList =
+            ParseModuleList(modules.value("beaconList", json::array()));
+      }
+    }
+    if (p.contains("filler") && p["filler"].is_object()) {
+      const json& filler = p["filler"];
+      ModuleFillerParameters& f = page->content.settings.filler;
+      f.fillMiners = filler.value("fillMiners", false);
+      f.fillerModule = dynamic_cast<Module*>(
+          Db().FindByTypeDotName(filler.value("fillerModule", "")));
+      f.beacon = dynamic_cast<EntityBeacon*>(
+          Db().FindByTypeDotName(filler.value("beacon", "")));
+      f.beaconModule = dynamic_cast<Module*>(
+          Db().FindByTypeDotName(filler.value("beaconModule", "")));
+      f.beaconsPerBuilding = filler.value("beaconsPerBuilding", 8);
     }
     project.pages.push_back(std::move(page));
   }
@@ -511,12 +689,30 @@ static std::string projectLoad(std::string text) {
       if (row->entity.target != nullptr) {
         rowJson["entity"] = row->entity.target->typeDotName();
       }
+      if (!row->modules.empty()) {
+        json modules{{"list", ModuleListJson(row->modules.list)},
+                     {"beaconList", ModuleListJson(row->modules.beaconList)}};
+        if (row->modules.beacon != nullptr) {
+          modules["beacon"] = row->modules.beacon->typeDotName();
+        }
+        rowJson["modules"] = std::move(modules);
+      }
       rows.push_back(std::move(rowJson));
     }
-    pages.push_back(json{{"name", pagePtr->name},
-                         {"goals", std::move(goals)},
-                         {"linked", std::move(linked)},
-                         {"rows", std::move(rows)}});
+    json pageJson{{"name", pagePtr->name},
+                  {"goals", std::move(goals)},
+                  {"linked", std::move(linked)},
+                  {"rows", std::move(rows)}};
+    const ModuleFillerParameters& f = source.settings.filler;
+    if (f.fillerModule != nullptr || f.beacon != nullptr || f.fillMiners) {
+      json filler{{"fillMiners", f.fillMiners},
+                  {"beaconsPerBuilding", f.beaconsPerBuilding}};
+      if (f.fillerModule != nullptr) filler["fillerModule"] = f.fillerModule->typeDotName();
+      if (f.beacon != nullptr) filler["beacon"] = f.beacon->typeDotName();
+      if (f.beaconModule != nullptr) filler["beaconModule"] = f.beaconModule->typeDotName();
+      pageJson["filler"] = std::move(filler);
+    }
+    pages.push_back(std::move(pageJson));
   }
   json errors = json::array();
   for (const std::string& error : loaded.errors) errors.push_back(error);
@@ -583,6 +779,9 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableClear", &tableClear);
   emscripten::function("tableAddLink", &tableAddLink);
   emscripten::function("tableAddRecipe", &tableAddRecipe);
+  emscripten::function("tableSetFiller", &tableSetFiller);
+  emscripten::function("setDefaults", &setDefaults);
+  emscripten::function("rowOptions", &rowOptions);
   emscripten::function("tableSolve", &tableSolve);
   emscripten::function("projectSaveAll", &projectSaveAll);
   emscripten::function("projectLoad", &projectLoad);
