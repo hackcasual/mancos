@@ -2,64 +2,158 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>YAFC Web — planner (milestone 1)</title>
+<title>YAFC Web — factory planner</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --bg: #1c2129;          /* steel */
+    --panel: #262c36;       /* panel plate */
+    --panel-edge: #333b48;
+    --blueprint: #4f9dd0;   /* blueprint cyan */
+    --signal-green: #57c357;
+    --signal-red: #e04a4a;
+    --signal-amber: #e8b23c;
+    --ink: #e6e3dc;
+    --muted: #8d96a3;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, monospace;
+    --condensed: "Barlow Semi Condensed", "Arial Narrow", "Helvetica Neue",
+                 system-ui, sans-serif;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: #17191d; color: #e8e6e3; }
-  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: #22252b; }
-  header h1 { font-size: 16px; margin: 0 12px 0 0; font-weight: 600; }
-  #status { color: #9aa0a6; font-size: 13px; }
-  main { display: grid; grid-template-columns: 320px 1fr; gap: 0; height: calc(100vh - 52px); }
-  #left { border-right: 1px solid #2e3238; padding: 12px; overflow-y: auto; }
-  #right { padding: 12px 16px; overflow-y: auto; }
-  input[type=text], input[type=number] { width: 100%; padding: 6px 8px; background: #101215; color: inherit; border: 1px solid #3a3f46; border-radius: 4px; }
-  button { background: #2f6fed; color: white; border: 0; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
-  button.small { padding: 2px 7px; font-size: 12px; }
-  button.ghost { background: #2c3037; }
-  .row { display: flex; gap: 8px; align-items: center; padding: 4px 2px; }
-  .row img, .goods img { width: 24px; height: 24px; image-rendering: pixelated; }
-  .muted { color: #9aa0a6; }
-  .list > div:hover { background: #22252b; }
-  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
-  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #2a2e34; }
-  th { color: #9aa0a6; font-weight: 500; font-size: 12px; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pos { color: #6fcf7c; } .neg { color: #e46e6e; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #9aa0a6; margin: 16px 0 6px; }
-  #recipeInfo { margin-top: 10px; }
-  .pill { background: #2c3037; border-radius: 999px; padding: 1px 8px; font-size: 12px; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+
+  header {
+    display: flex; gap: 14px; align-items: baseline; padding: 10px 18px;
+    background: var(--panel); border-bottom: 1px solid var(--panel-edge);
+  }
+  header h1 {
+    margin: 0; font-family: var(--condensed); font-size: 17px; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase;
+  }
+  header h1 span { color: var(--blueprint); }
+  #status { color: var(--muted); font-size: 13px; font-family: var(--mono); }
+  header button { margin-left: auto; }
+
+  main { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 47px); }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; grid-template-rows: 40% 60%; } }
+
+  /* ---- catalog (left) ---- */
+  #left { border-right: 1px solid var(--panel-edge); padding: 14px; overflow-y: auto; background: var(--panel); }
+  .eyebrow {
+    font-family: var(--condensed); font-size: 11px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--blueprint);
+    margin: 18px 0 6px;
+  }
+  .eyebrow:first-child { margin-top: 0; }
+
+  /* ---- workspace (right): blueprint grid ---- */
+  #right {
+    padding: 16px 20px; overflow-y: auto;
+    background:
+      linear-gradient(rgba(79,157,208,.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,157,208,.045) 1px, transparent 1px),
+      var(--bg);
+    background-size: 24px 24px;
+  }
+
+  input[type=text] {
+    width: 100%; padding: 7px 9px; background: #14181f; color: inherit;
+    border: 1px solid var(--panel-edge); border-radius: 3px; font: inherit;
+  }
+  input[type=text]:focus { outline: 1px solid var(--blueprint); outline-offset: 0; }
+  button {
+    background: #33507a; color: var(--ink); border: 1px solid #45699c;
+    border-radius: 3px; padding: 4px 11px; cursor: pointer; font: 600 13px var(--condensed);
+    letter-spacing: .04em;
+  }
+  button:hover { background: #3c5d8e; }
+  button:focus-visible { outline: 2px solid var(--blueprint); outline-offset: 1px; }
+  button.small { padding: 2px 8px; font-size: 12px; }
+  button.ghost { background: transparent; border-color: var(--panel-edge); color: var(--muted); }
+  button.ghost:hover { color: var(--ink); border-color: var(--muted); }
+  button.x { padding: 0 7px; background: transparent; border: 0; color: var(--muted); font-size: 14px; }
+  button.x:hover { color: var(--signal-red); background: transparent; }
+
+  .row { display: flex; gap: 8px; align-items: center; padding: 4px 2px; min-height: 30px; }
+  .row canvas, .row img { width: 24px; height: 24px; image-rendering: pixelated; flex: none; }
+  .muted { color: var(--muted); }
+  .mono, td.num, .amt { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .list > div { border-radius: 3px; }
+  .list > div:hover { background: rgba(79,157,208,.08); }
+
+  /* ---- nameplate rows: the signature ---- */
+  #rows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .plate {
+    background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 3px;
+    border-left: 3px solid var(--signal-green); padding: 7px 10px 6px;
+  }
+  .plate.warn { border-left-color: var(--signal-amber); }
+  .plate .head { display: flex; gap: 10px; align-items: center; }
+  .plate .name { font-family: var(--condensed); font-weight: 600; font-size: 14.5px; letter-spacing: .02em; }
+  .plate .crafts { margin-left: auto; font-family: var(--mono); font-size: 15px; }
+  .plate .crafts small { color: var(--muted); font-size: 11px; margin-left: 4px; }
+  .plate .flows { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 5px 0 0 34px; font-size: 12.5px; }
+  .flow { font-family: var(--mono); }
+  .flow::before { content: "●"; font-size: 8px; vertical-align: 2px; margin-right: 5px; }
+  .flow.pos { color: var(--signal-green); } .flow.pos::before { color: var(--signal-green); }
+  .flow.neg { color: var(--signal-red); } .flow.neg::before { color: var(--signal-red); }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 12.5px; margin: 2px 4px 2px 0;
+  }
+  .pill.goal { border-color: var(--signal-amber); }
+  .pill.goal .amt { color: var(--signal-amber); }
+  .pill.bad { border-color: var(--signal-red); }
+  .pill button.x { font-size: 12px; padding: 0 4px; }
+
+  .pos { color: var(--signal-green); } .neg { color: var(--signal-red); }
+  #flows .row { padding-left: 4px; }
+  #dropHint {
+    border: 1px dashed var(--panel-edge); border-radius: 4px; padding: 28px 20px;
+    text-align: center; color: var(--muted); margin-top: 10vh;
+  }
+  #dropHint code { font-family: var(--mono); color: var(--blueprint); }
+  @media (prefers-reduced-motion: no-preference) {
+    .plate { transition: border-color .15s ease; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>YAFC Web</h1>
+  <h1>YAFC <span>WEB</span></h1>
+  <span id="status">no bundle loaded</span>
   <input type="file" id="bundleFile" accept=".yafcbundle,.zip" hidden>
   <button id="loadBtn">Load bundle…</button>
-  <span id="status">no bundle loaded — build one with yafc-bundler</span>
 </header>
 <main>
   <div id="left">
-    <input type="text" id="search" placeholder="Search goods (e.g. lead-plate)…" disabled>
+    <div class="eyebrow">Catalog</div>
+    <input type="text" id="search" placeholder="Search goods — try lead-plate" disabled
+           aria-label="Search goods">
     <div id="results" class="list"></div>
     <div id="recipeInfo"></div>
   </div>
   <div id="right">
-    <div class="row">
-      <h2 style="margin:0">Production table</h2>
-      <button id="solveBtn" class="small" disabled>Solve</button>
-      <button id="clearBtn" class="small ghost" disabled>Clear</button>
+    <div id="dropHint">
+      <p><strong>Load a bundle to start planning.</strong></p>
+      <p>Bundles are built from your own game files with<br>
+      <code>yafc-bundler &lt;data&gt; &lt;mods&gt; &lt;env&gt; out.yafcbundle</code></p>
     </div>
-    <div id="goals" class="muted">No goals yet — search a goods and set a demand.</div>
-    <table id="rows" hidden>
-      <thead><tr><th></th><th>Recipe</th><th class="num">Crafts/min</th><th>Flows</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <h2>Linked goods</h2>
-    <div id="links" class="muted">—</div>
-    <h2>Unlinked flows (imports − / surplus +)</h2>
-    <div id="flows" class="muted">—</div>
+    <div id="workspace" hidden>
+      <div class="row" style="padding:0">
+        <div class="eyebrow" style="margin:0">Factory</div>
+        <button id="clearBtn" class="small ghost">Clear table</button>
+      </div>
+      <div id="goals" style="margin-top:6px"></div>
+      <div id="rows"></div>
+      <div class="eyebrow">Linked goods</div>
+      <div id="links">—</div>
+      <div class="eyebrow">Off-table flows — imports and surplus</div>
+      <div id="flows" class="muted">—</div>
+    </div>
   </div>
 </main>
 <script type="module" src="app.js"></script>

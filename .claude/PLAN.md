@@ -197,8 +197,15 @@ Recipe + status: `solver-wasm/README.md`.
    (`web/index.html`/`app.js`): load bundle, search goods, producer browsing, demand
    goals, link/row management, solve, flows incl. imports/surplus, first-layer icons via
    blob URLs. `scripts/build-web.sh` -> web/dist (2.3 MB incl. wasm). Headless node smoke
-   drives the golden lead table through the public API. Next: TS types, icon layer
-   compositing, row editing/removal, project save/load via the serialization layer.
+   drives the golden lead table through the public API.
+   Increment 2 (2026-07-03): candidate auto-pull on flows (directive: "produce ▸"/
+   "consume ▸" link the goods and auto-add a sole candidate or present a ranked picker —
+   in-table-ingredient overlap first), full icon layer compositing (canvas: scale/shift/
+   tint per FactorioIconPart), nameplate-row visual identity (blueprint grid workspace,
+   circuit red/green flow semantics, amber goals, tabular-mono numerics, system fonts
+   only — offline-first), row removal, goal edit/remove, unlink, per-bundle localStorage
+   persistence. Next: TS types, locale catalogs in bundles (readable names), .yafc
+   project import/export, RecipeParameters for building counts.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.
