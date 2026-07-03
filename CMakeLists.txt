@@ -54,11 +54,18 @@ include(cmake/lua.cmake)
 
 add_subdirectory(src)
 
-# The bundler CLI: filesystem-facing half of the split app (native only; the
-# browser bundler page will reuse the same core through the wasm build).
+# The bundler CLI: filesystem-facing half of the split app. Native for local
+# use; under emscripten the same main() builds as a node-runnable wasm CLI
+# (NODERAWFS reads the real filesystem) — the release artifact.
 if(NOT EMSCRIPTEN)
   add_executable(yafc_bundler src/tools/bundler_main.cc)
   target_link_libraries(yafc_bundler PRIVATE yafc_core)
+else()
+  add_executable(yafc_bundler_node src/tools/bundler_main.cc)
+  target_link_libraries(yafc_bundler_node PRIVATE yafc_core)
+  target_link_options(yafc_bundler_node PRIVATE
+    -sNODERAWFS=1 -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1
+    -sSTACK_SIZE=2097152)
 endif()
 
 # The web module: the wasm core of the main app (built by scripts/build-web.sh).

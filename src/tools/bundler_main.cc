@@ -16,11 +16,47 @@
 
 using namespace yafc;
 
+namespace {
+
+void PrintHelp(const char* program) {
+  std::printf(
+      "yafc-bundler — builds a Mancos .yafcbundle from Factorio game files\n"
+      "\n"
+      "usage: %s <factorio-data-path> <mods-path|vanilla> <env-lua-path> "
+      "<out.yafcbundle>\n"
+      "       %s -h | --help\n"
+      "\n"
+      "arguments:\n"
+      "  factorio-data-path  Factorio's data/ directory (contains core/ and base/)\n"
+      "  mods-path           your mods/ directory (contains mod-list.json), or the\n"
+      "                      literal word 'vanilla' to bundle the base game only\n"
+      "  env-lua-path        the bundler's Lua environment directory (Sandbox.lua,\n"
+      "                      Defines*.lua — ships with releases as env/)\n"
+      "  out.yafcbundle      output file the Mancos planner loads\n"
+      "\n"
+      "The bundle contains the parsed prototype database, analyses, per-object\n"
+      "costs, extracted icons (32px max), and locale catalogs. Everything runs\n"
+      "locally; nothing leaves your machine unless you share the bundle.\n"
+      "\n"
+      "example:\n"
+      "  %s ~/factorio/data ~/factorio/mods env pyanodon.yafcbundle\n",
+      program, program, program);
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "-h" || arg == "--help") {
+      PrintHelp(argv[0]);
+      return 0;
+    }
+  }
   if (argc != 5) {
     std::fprintf(stderr,
                  "usage: %s <factorio-data-path> <mods-path|vanilla> <env-lua-path> "
-                 "<out.yafcbundle>\n",
+                 "<out.yafcbundle>\nrun with --help for details\n",
                  argv[0]);
     return 2;
   }

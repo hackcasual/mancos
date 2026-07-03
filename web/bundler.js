@@ -140,3 +140,46 @@ if (!supported()) {
   $('#unsupported').hidden = false;
   $('#picker').hidden = true;
 }
+
+// Chrome refuses folder access to OS-protected locations (on Windows that
+// includes Program Files, where Factorio usually lives): the picker either
+// blocks the folder or shows it greyed out. Tell users where their install
+// probably is and to copy it somewhere ordinary first.
+(() => {
+  const platform = (navigator.userAgentData?.platform ?? navigator.platform ?? '')
+      .toLowerCase();
+  const paths = platform.includes('win') ? {
+    os: 'Windows',
+    data: ['C:\\Program Files (x86)\\Steam\\steamapps\\common\\Factorio\\data (Steam)',
+           'C:\\Program Files\\Factorio\\data (standalone)'],
+    mods: ['%APPDATA%\\Factorio\\mods'],
+    copyTo: 'C:\\Users\\<you>\\Documents\\factorio-bundle\\',
+    blocked: true,
+  } : platform.includes('mac') ? {
+    os: 'macOS',
+    data: ['~/Library/Application Support/Steam/steamapps/common/factorio/factorio.app/Contents/data'],
+    mods: ['~/Library/Application Support/factorio/mods'],
+    copyTo: '~/Documents/factorio-bundle/',
+    blocked: false,
+  } : {
+    os: 'Linux',
+    data: ['~/.local/share/Steam/steamapps/common/Factorio/data',
+           '~/.steam/steam/steamapps/common/Factorio/data'],
+    mods: ['~/.factorio/mods'],
+    copyTo: '~/factorio-bundle/',
+    blocked: false,
+  };
+  const list = (items) => items.map((p) => `<code>${esc(p)}</code>`).join('<br>');
+  $('#dirAccessNote').innerHTML =
+      `<strong>Where to find these on ${paths.os}:</strong><br>` +
+      `Data: ${list(paths.data)}<br>Mods: ${list(paths.mods)}<br>` +
+      (paths.blocked
+          ? `<strong>Note:</strong> Chrome treats <code>Program Files</code> and other ` +
+            `system locations as protected and won't let this page read them. If the ` +
+            `picker refuses your install folder, copy <code>data/</code> (and ` +
+            `<code>mods/</code>) to somewhere like <code>${esc(paths.copyTo)}</code> ` +
+            `and pick the copies instead.`
+          : `If the picker refuses a folder (some system locations are protected), ` +
+            `copy <code>data/</code> and <code>mods/</code> to e.g. ` +
+            `<code>${esc(paths.copyTo)}</code> and pick the copies.`);
+})();

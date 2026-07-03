@@ -1,0 +1,59 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundler:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache third_party
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: third-party-v1-${{ hashFiles('scripts/bootstrap.sh', 'patches/**') }}
+
+      - name: Bootstrap toolchains and deps
+        run: ./scripts/bootstrap.sh
+
+      - name: Build node bundler (wasm)
+        run: |
+          source third_party/emsdk/emsdk_env.sh
+          emcmake cmake -S . -B build/wasm -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/wasm --target yafc_bundler_node -j"$(nproc)"
+
+      - name: Package
+        run: |
+          pkg=mancos-bundler-${GITHUB_REF_NAME:-dev}
+          mkdir -p "$pkg"
+          cp build/wasm/yafc_bundler_node.js build/wasm/yafc_bundler_node.wasm "$pkg/"
+          cp scripts/release/mancos-bundler.mjs "$pkg/"
+          cp scripts/release/BUNDLER-README.md "$pkg/README.md"
+          cp LICENSE licenses.txt "$pkg/"
+          cp -r third_party/yafc-ce/Yafc/Data "$pkg/env"
+          # Smoke: --help must run under the runner's node.
+          node "$pkg/mancos-bundler.mjs" --help
+          zip -qr "$pkg.zip" "$pkg"
+          echo "PKG=$pkg.zip" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$PKG" \
+            --title "Mancos $GITHUB_REF_NAME" --generate-notes
+
+      - name: Upload artifact (non-tag runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mancos-bundler
+          path: ${{ env.PKG }}
