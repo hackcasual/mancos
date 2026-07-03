@@ -42,10 +42,15 @@ struct BundleWriteStats {
 
 // Extracts icons through mods and writes the complete bundle zip.
 // costs: optional per-object yafc cost (by id, from CostAnalysis) -> costs.cbor.
+// locales: optional raw catalogs per language -> locale/<lang>.json entries
+// (the web app applies them client-side via ApplyLocale).
 BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
                              const ModSet& mods, const std::string& factorioVersion,
                              const std::map<std::string, std::string>& modVersions,
-                             const std::vector<float>* costs = nullptr);
+                             const std::vector<float>* costs = nullptr,
+                             const std::map<std::string,
+                                            std::map<std::string, std::string>>*
+                                 locales = nullptr);
 
 struct Bundle {
   std::unique_ptr<Database> db;
@@ -53,6 +58,7 @@ struct Bundle {
   nlohmann::json iconManifest;                     // typeDotName -> layer list
   std::map<std::string, std::string> iconFiles;    // "icons/<n>.png" -> bytes
   std::vector<float> costs;                        // per-object yafc cost (may be empty)
+  std::map<std::string, std::string> localeFiles;  // lang -> raw catalog json text
 };
 
 // Loads a bundle from a file or from memory (the web app's path).

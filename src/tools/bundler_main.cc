@@ -44,10 +44,20 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "[warn] %s\n", error.c_str());
     }
 
-    std::fprintf(stderr, "[locale] applying en names\n");
-    LocaleCatalog locale =
-        LoadLocale(*parsed.modSet, parsed.modLoadOrder, "en", envPath);
-    ApplyLocale(*loaded.db, locale);
+    std::vector<std::string> languages =
+        FindLocaleLanguages(*parsed.modSet, parsed.modLoadOrder);
+    std::fprintf(stderr, "[locale] %zu languages\n", languages.size());
+    std::map<std::string, std::map<std::string, std::string>> locales;
+    for (const std::string& lang : languages) {
+      LocaleCatalog catalog =
+          LoadLocale(*parsed.modSet, parsed.modLoadOrder, lang, envPath);
+      locales[lang] = {catalog.begin(), catalog.end()};
+    }
+    // Bake English as the dump default; the app re-applies per language.
+    if (auto it = locales.find("en"); it != locales.end()) {
+      LocaleCatalog en(it->second.begin(), it->second.end());
+      ApplyLocale(*loaded.db, en);
+    }
 
     std::fprintf(stderr, "[analysis] dependencies/milestones/automation/cost\n");
     Dependencies deps;
@@ -70,7 +80,8 @@ int main(int argc, char** argv) {
 
     BundleWriteStats stats =
         WriteBundle(outPath, *loaded.db, *parsed.modSet,
-                    parsed.factorioVersion.ToString3(), modVersions, &costs);
+                    parsed.factorioVersion.ToString3(), modVersions, &costs,
+                    &locales);
     auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0);
 
     std::printf("bundle written: %s\n", outPath.c_str());
@@ -78,6 +89,7 @@ int main(int argc, char** argv) {
                 stats.databaseBytes / 1e6);
     std::printf("  icons:     %zu files, %.1f MB (%zu unresolvable)\n",
                 stats.iconFiles, stats.iconBytes / 1e6, stats.missingIcons);
+    std::printf("  languages: %zu\n", locales.size());
     std::printf("  mods:      %zu, factorio %s\n", modVersions.size(),
                 parsed.factorioVersion.ToString3().c_str());
     std::printf("  elapsed:   %.1fs\n", seconds.count());

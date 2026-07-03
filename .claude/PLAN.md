@@ -1,5 +1,13 @@
 # YAFC-Web: Port yafc-ce to the browser as C++/WebAssembly
 
+# Human Priorities
+
+1. Implement loading yafc projects
+2. Support serializing projects to base-64, and allow loading them from encoded URL query parameter (server-less)
+3. Support a manifest of bundled modpacks and allow selecting one to be loaded from the server. The last loaded pack should be stored in persistent storage and opened by default
+4. The technology picker should show technology levels based on research, and gate products based on research levels
+5. There should be a mobile phone mode, with a sensible UI, optimizing for building a production table
+
 Goal: port [Yafc-CE](https://github.com/Yafc-CE/yafc-ce) (Factorio production calculator,
 C#/.NET 10 + SDL2 + Google OR-Tools + Lua 5.2.1) to run entirely client-side in a browser.
 

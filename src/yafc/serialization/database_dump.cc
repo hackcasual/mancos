@@ -687,7 +687,10 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
 BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
                              const ModSet& mods, const std::string& factorioVersion,
                              const std::map<std::string, std::string>& modVersions,
-                             const std::vector<float>* costs) {
+                             const std::vector<float>* costs,
+                             const std::map<std::string,
+                                            std::map<std::string, std::string>>*
+                                 locales) {
   BundleWriteStats stats;
   stats.objects = static_cast<size_t>(db.objects.count());
 
@@ -755,6 +758,13 @@ BundleWriteStats WriteBundle(const std::string& outPath, const Database& db,
     std::vector<uint8_t> costsCbor = json::to_cbor(json(*costs));
     add("costs.cbor", costsCbor.data(), costsCbor.size(), MZ_DEFAULT_COMPRESSION);
   }
+  if (locales != nullptr) {
+    for (const auto& [lang, catalog] : *locales) {
+      std::string text = json(catalog).dump();
+      add(("locale/" + lang + ".json").c_str(), text.data(), text.size(),
+          MZ_DEFAULT_COMPRESSION);
+    }
+  }
   add("icons.json", manifestText.data(), manifestText.size(), MZ_DEFAULT_COMPRESSION);
   for (const auto& [name, bytes] : iconFiles) {
     add(name.c_str(), bytes.data(), bytes.size(), MZ_NO_COMPRESSION);  // PNGs
@@ -799,6 +809,9 @@ Bundle ReadBundleFromZip(mz_zip_archive& zip) {
     if (!mz_zip_reader_file_stat(&zip, i, &stat) || stat.m_is_directory) continue;
     std::string name = stat.m_filename;
     if (name.rfind("icons/", 0) == 0) bundle.iconFiles[name] = readEntry(name);
+    if (name.rfind("locale/", 0) == 0 && name.size() > 12) {
+      bundle.localeFiles[name.substr(7, name.size() - 12)] = readEntry(name);
+    }
   }
   return bundle;
 }

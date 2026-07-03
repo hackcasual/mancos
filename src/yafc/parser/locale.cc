@@ -1,5 +1,6 @@
 #include "yafc/parser/locale.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -54,6 +55,32 @@ LocaleCatalog LoadLocale(const ModSet& mods, const std::vector<std::string>& mod
     }
   }
   return catalog;
+}
+
+std::vector<std::string> FindLocaleLanguages(
+    const ModSet& mods, const std::vector<std::string>& modOrder) {
+  std::vector<std::string> languages;
+  for (const std::string& mod : modOrder) {
+    for (const std::string& file : mods.GetAllModFiles(mod, "locale/")) {
+      // "locale/<lang>/<file>.cfg"
+      size_t start = std::string("locale/").size();
+      size_t slash = file.find('/', start);
+      if (slash == std::string::npos) continue;
+      std::string lang = file.substr(start, slash - start);
+      if (std::find(languages.begin(), languages.end(), lang) == languages.end()) {
+        languages.push_back(lang);
+      }
+    }
+  }
+  std::sort(languages.begin(), languages.end());
+  return languages;
+}
+
+void ResetLocale(Database& db) {
+  for (FactorioObject* o : db.objects) {
+    o->locName = o->name;
+    o->locDescr.clear();
+  }
 }
 
 namespace {

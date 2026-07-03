@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "yafc/model/production_table.h"
+#include "yafc/parser/locale.h"
 #include "yafc/serialization/database_dump.h"
 
 using namespace yafc;
@@ -209,6 +210,35 @@ static std::string tableSolve() {
 
 // Research state. Input: {"filter":bool,"techs":[tdn...]}; prerequisites are
 // implied transitively. Returns the expanded set for persistence/rendering.
+static std::string listLanguages() {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json langs = json::array();
+  for (const auto& [lang, _] : g_bundle->localeFiles) langs.push_back(lang);
+  return langs.dump();
+}
+
+// Applies a language: reset to internal names, then English as the base
+// (covers holes in partial translations), then the chosen catalog on top.
+static std::string setLanguage(std::string lang) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  LocaleCatalog merged;
+  auto addCatalog = [&](const std::string& code) {
+    auto it = g_bundle->localeFiles.find(code);
+    if (it == g_bundle->localeFiles.end()) return false;
+    json parsed = json::parse(it->second, nullptr, false);
+    if (parsed.is_discarded()) return false;
+    for (const auto& [key, value] : parsed.items()) {
+      merged[key] = value.get<std::string>();
+    }
+    return true;
+  };
+  addCatalog("en");
+  bool found = lang == "en" || addCatalog(lang);
+  ResetLocale(Db());
+  ApplyLocale(Db(), merged);
+  return json{{"ok", true}, {"applied", found ? lang : "en"}}.dump();
+}
+
 static std::string setResearch(std::string request) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   json parsed = json::parse(request, nullptr, false);
@@ -274,6 +304,8 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableAddLink", &tableAddLink);
   emscripten::function("tableAddRecipe", &tableAddRecipe);
   emscripten::function("tableSolve", &tableSolve);
+  emscripten::function("listLanguages", &listLanguages);
+  emscripten::function("setLanguage", &setLanguage);
   emscripten::function("setResearch", &setResearch);
   emscripten::function("searchTechs", &searchTechs);
   emscripten::function("iconLayers", &iconLayers);

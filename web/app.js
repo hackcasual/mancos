@@ -285,6 +285,50 @@ async function showGoods(tdn) {
   };
 }
 
+// ---- language: browser auto-detection + selector ----
+function pickLanguage(available) {
+  const saved = localStorage.getItem('yafc:lang');
+  if (saved && available.includes(saved)) return saved;
+  // navigator.languages: try exact match (zh-CN), then base code (de-DE -> de).
+  for (const pref of navigator.languages ?? [navigator.language]) {
+    if (available.includes(pref)) return pref;
+    const base = pref.split('-')[0];
+    if (available.includes(base)) return base;
+  }
+  return available.includes('en') ? 'en' : available[0];
+}
+
+async function applyLanguage(lang) {
+  await rpc('setLanguage', lang);
+  localStorage.setItem('yafc:lang', lang);
+  iconUrlCache.clear();  // names changed; icon canvases are name-independent but cheap
+  await rebuildAndSolve();
+  $('#results').innerHTML = '';
+  $('#recipeInfo').innerHTML = '';
+}
+
+function renderLanguageSelect(available, current) {
+  const display = new Intl.DisplayNames(navigator.languages ?? ['en'],
+                                        { type: 'language' });
+  const label = (code) => {
+    try { return display.of(code.replace('-', '-')) ?? code; } catch { return code; }
+  };
+  const select = document.createElement('select');
+  select.id = 'langSelect';
+  select.ariaLabel = 'Language';
+  for (const code of available) {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = `${label(code)} (${code})`;
+    option.selected = code === current;
+    select.append(option);
+  }
+  select.onchange = () => applyLanguage(select.value);
+  const existing = $('#langSelect');
+  if (existing) existing.replaceWith(select);
+  else $('#loadBtn').before(select);
+}
+
 // ---- research tab ----
 $('#tabCatalog').onclick = () => setTab(true);
 $('#tabResearch').onclick = () => setTab(false);
@@ -340,6 +384,12 @@ $('#bundleFile').onchange = async (e) => {
   } catch { research = { filter: false, techs: [] }; }
   await pushResearch();
   $('#researchFilter').checked = research.filter;
+  const languages = await rpc('listLanguages');
+  if (Array.isArray(languages) && languages.length > 0) {
+    const lang = pickLanguage(languages);
+    if (lang !== 'en') await rpc('setLanguage', lang);
+    renderLanguageSelect(languages, lang);
+  }
   $('#search').disabled = false;
   $('#dropHint').hidden = true;
   $('#workspace').hidden = false;

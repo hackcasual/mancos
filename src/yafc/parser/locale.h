@@ -23,6 +23,14 @@ void ParseLocaleCfg(const std::string& text, LocaleCatalog& into);
 LocaleCatalog LoadLocale(const ModSet& mods, const std::vector<std::string>& modOrder,
                          const std::string& language, const std::string& envPath);
 
+// Languages available across the enabled mods (union of locale/<lang>/ dirs).
+std::vector<std::string> FindLocaleLanguages(const ModSet& mods,
+                                             const std::vector<std::string>& modOrder);
+
+// Clears localized names back to internal names so a different language's
+// catalog can be applied (fallback rules key off locName == name).
+void ResetLocale(Database& db);
+
 // Sets locName/locDescr using Factorio's implicit-key rules:
 // <kind>-name.<name> with fallbacks (items fall back to their placed entity,
 // recipes to their main product, split fluids use their original name);
