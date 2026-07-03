@@ -277,9 +277,10 @@ Recipe + status: `solver-wasm/README.md`.
    Format study (sharp/libvips over all 4899 icons): pngcrush-class recompress only
    -6..9% (stb+miniz already competitive); WebP lossless -23%; WebP lossy q90 -48%
    (~4 MB); AVIF q70 ~-41% (worse than WebP at 32px, plus Safari<16 concerns).
-   Verdict: skip libwebp integration for now. NEXT biggest lever: locale files are
-   6.33 MB = 40% of the bundle (55 languages) — split locales out of the bundle or
-   lazy-load only the browser language.
+   Verdict: skip libwebp integration for now. Locale files are 6.33 MB compressed
+   (26.3 MB raw, 55 languages) = ~38% of the bundle; splitting/lazy-loading them was
+   considered and DECLINED 2026-07-03 (user: "keep the compressed locale data to
+   simplify") — the bundle stays a single self-contained file at ~16.6 MB.
    Increment 7 (2026-07-03): PRODUCT RENAMED TO "MANCOS" (user directive, ship
    cleanup): page titles/headers, localStorage keys (mancos:* with one-time yafc:*
    migration), provenance line on the landing panel. "yafc" stays wherever it means
