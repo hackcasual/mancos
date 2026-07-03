@@ -1202,12 +1202,17 @@ async function loadBundleBuffer(buffer, label, packId) {
     if (restore()) {
       rebuildAndSolve();
     } else {
+      // Fresh pack with no saved project: start clean — never carry the
+      // previous pack's pages into this bundle's state.
+      pages = [newPage('Page 1')];
+      activePage = 0;
+      bindActivePage();
       renderPageTabs();
       renderSolve({ status: 0, rows: [], links: [], flows: [] });
     }
   }
   recordHistory();  // baseline so the very first edit is undoable
-  for (const id of ['shareBtn', 'exportBtn', 'importBtn']) {
+  for (const id of ['shareBtn', 'exportBtn', 'importBtn', 'switchBtn']) {
     document.getElementById(id).disabled = false;
   }
   // Milestones last: the first call runs the accessibility walks in the
@@ -1222,6 +1227,38 @@ async function loadBundleBuffer(buffer, label, packId) {
   renderMilestonesSummary();
   if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
 }
+
+// ---- switch pack: close the current project, back to the chooser ----
+// The project is already persisted per bundle on every change; picking this
+// pack again later restores it exactly. Clearing lastPack means a reload
+// also lands on the chooser instead of auto-loading.
+$('#switchBtn').onclick = () => {
+  persist();
+  localStorage.removeItem('mancos:lastPack');
+  bundleKey = null;
+  pages = [newPage('Page 1')];
+  activePage = 0;
+  bindActivePage();
+  undoStack.length = 0;
+  redoStack.length = 0;
+  lastPagesJson = null;
+  lastSnapshot = null;
+  milestones = [];
+  favorites = new Set();
+  for (const id of ['shareBtn', 'exportBtn', 'importBtn', 'switchBtn']) {
+    document.getElementById(id).disabled = true;
+  }
+  $('#search').disabled = true;
+  $('#search').value = '';
+  $('#results').innerHTML = '';
+  $('#recipeInfo').innerHTML = '';
+  $('#techResults').innerHTML = '';
+  $('#milestonesSummary').textContent = '';
+  updateUndoButtons();
+  $('#workspace').hidden = true;
+  $('#dropHint').hidden = false;
+  status('no bundle loaded — pick a pack');
+};
 
 // Mobile: the catalog is a bottom sheet behind the floating button.
 $('#catalogFab').onclick = () => {
