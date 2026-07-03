@@ -50,6 +50,17 @@ class Bits {
   }
   friend Bits operator&(Bits a, const Bits& b) { return a &= b; }
 
+  // Big-integer subtraction of a small constant (upstream operator-(Bits, ulong)).
+  Bits& operator-=(uint64_t value) {
+    for (size_t i = 0; i < data_.size() && value != 0; ++i) {
+      uint64_t before = data_[i];
+      data_[i] -= value;
+      value = before < value ? 1 : 0;  // borrow
+    }
+    return *this;
+  }
+  friend Bits operator-(Bits a, uint64_t b) { return a -= b; }
+
   int HighestBitSet() const {
     for (size_t i = data_.size(); i-- > 0;) {
       if (data_[i] != 0) {

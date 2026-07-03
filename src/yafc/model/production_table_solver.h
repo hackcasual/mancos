@@ -20,6 +20,7 @@ struct LinkFlags {
   static constexpr uint32_t kLinkRecursiveNotMatched = 1u << 1;
   static constexpr uint32_t kHasConsumption = 1u << 2;
   static constexpr uint32_t kHasProduction = 1u << 3;
+  static constexpr uint32_t kChildNotMatched = 1u << 4;
   static constexpr uint32_t kHasProductionAndConsumption =
       kHasConsumption | kHasProduction;
 };
@@ -28,6 +29,7 @@ struct LinkFlags {
 struct RecipeWarningFlags {
   static constexpr uint32_t kDeadlockCandidate = 1u << 16;
   static constexpr uint32_t kOverproductionRequired = 1u << 17;
+  static constexpr uint32_t kExceedsBuiltCount = 1u << 18;
 };
 
 // Upstream: Solve() returns null or a localized message; we return a code.

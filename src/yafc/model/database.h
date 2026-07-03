@@ -63,10 +63,11 @@ class FactorioIdRange {
     explicit Mapping(const FactorioIdRange& source)
         : offset_(source.start()), values_(source.count()) {}
 
-    TValue& operator[](const T* key) { return values_[key->id - offset_]; }
-    const TValue& operator[](const T* key) const { return values_[key->id - offset_]; }
-    TValue& ById(FactorioId id) { return values_[id - offset_]; }
-    const TValue& ById(FactorioId id) const { return values_[id - offset_]; }
+    // decltype(auto): std::vector<bool> hands back proxies, not references.
+    decltype(auto) operator[](const T* key) { return values_[key->id - offset_]; }
+    decltype(auto) operator[](const T* key) const { return values_[key->id - offset_]; }
+    decltype(auto) ById(FactorioId id) { return values_[id - offset_]; }
+    decltype(auto) ById(FactorioId id) const { return values_[id - offset_]; }
     size_t size() const { return values_.size(); }
     void Clear() { std::fill(values_.begin(), values_.end(), TValue{}); }
     std::vector<TValue>& values() { return values_; }
@@ -85,9 +86,17 @@ class FactorioIdRange {
         : offset1_(key1.start()), offset2_(key2.start()), count2_(key2.count()),
           values_(static_cast<size_t>(key1.count()) * key2.count()) {}
 
-    TValue& operator()(const T* x, const TOther* y) {
+    decltype(auto) operator()(const T* x, const TOther* y) {
       return values_[(x->id - offset1_) * static_cast<size_t>(count2_) +
                      (y->id - offset2_)];
+    }
+
+    // Upstream Mapping.CopyRow: copies all values for key `from` to key `to`.
+    void CopyRow(const T* from, const T* to) {
+      size_t src = (from->id - offset1_) * static_cast<size_t>(count2_);
+      size_t dst = (to->id - offset1_) * static_cast<size_t>(count2_);
+      std::copy(values_.begin() + src, values_.begin() + src + count2_,
+                values_.begin() + dst);
     }
 
    private:

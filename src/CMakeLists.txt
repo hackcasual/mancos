@@ -4,8 +4,10 @@ add_library(yafc_core
   yafc/analysis/dependencies.cc
   yafc/analysis/dependency_node.cc
   yafc/analysis/milestones.cc
+  yafc/analysis/technology_science_analysis.cc
   yafc/model/data_classes.cc
   yafc/model/database.cc
+  yafc/model/production_table.cc
   yafc/model/production_table_solver.cc
   yafc/solver/lp.cc
   yafc/lua/lua_vm.cc
@@ -13,4 +15,5 @@ add_library(yafc_core
 target_include_directories(yafc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(yafc_core
   PRIVATE ortools::glop lua::lua
+  PUBLIC nlohmann_json::nlohmann_json
 )
