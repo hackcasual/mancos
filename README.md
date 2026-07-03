@@ -1,44 +1,23 @@
-<h1 align="center">Mancos</h1>
-<p align="center">A factory planner for heavily modded Factorio, in your browser.</p>
+# Mancos
 
-Mancos is a C++/WebAssembly port of [YAFC: Community Edition](https://github.com/Yafc-CE/yafc-ce)
-(itself a continuation of [YAFC](https://github.com/ShadowTheAge/yafc) by ShadowTheAge) —
-the planner built to handle deeply recursive modpacks like Pyanodons. The data
-model, analyses (cost, milestones, automation) and the OR-Tools/GLOP-based
-production-table solver are direct ports; the UI is web-native. It reads and
-writes desktop YAFC `.yafc` project files.
+Mancos is yet another yet another yet another factory planner for Factorio. It is an AI (Claude Fable 5 initially) driven port of yafc-ce to C++ and the Web. It uses the same underlying linear programming library for optimizing recipes and loads the same projects as Yafc. As its a source translation this is a seperate project and not a branch of the original project. 
 
-## How it works
+![Screenshot showing building out the space research data pack from Krastorio 2](docs/images/kras2.png)
+![Screenshot showing fleshing out the simple circuit board build](docs/images/py-circ.png)
 
-Mancos is split in two so the app never touches game files:
+## Features
 
-- **Bundler** (`bundler.html`, or the `mancos_bundler` CLI): runs the full Lua
-  data stage against *your* copy of Factorio + mods, entirely client-side, and
-  emits a single `.yafcbundle` (database, analyses, icons, locales). Game
-  assets stay on your machine.
-- **Planner** (`index.html`): loads a bundle and plans — demand goals, linked
-  goods with per-link over-production control, modules/beacons, milestones,
-  research filtering, multi-page projects, undo/redo, serverless share links.
+Mancos is entirely client side, and the main app is less than 2MBs of JS and WASM. The main app uses bundle files to keep recipe data for a mod set together. There are a few bundles provided, and you can use the bundler app to create your own. Currently this requires Chrome to provide directory access, or you can download a node.js app from `releases` to run the bundler locally.
 
-Everything runs in the browser; the solver runs in a Web Worker.
+Sharing projects via links works well, the project file is packed into the URL, allowing you to share a build with other users
 
-## Building
+## Why?
 
-```sh
-./scripts/bootstrap.sh      # fetches emsdk, or-tools (GLOP), patched Lua
-./scripts/build-native.sh   # native build + test suite
-./scripts/build-wasm.sh     # wasm build, tests run under node
-./scripts/build-web.sh      # assembles the app into web/dist
-python3 -m http.server -d web/dist 8080
-```
+My primary motivation for this was factory planning on the go, for those tragic momements when I couldn't be near my factory. This is also a lower bar to entry for a lot of players.
 
-## Release channels
+## Feature Requests
 
-`main` deploys to the site root; the `beta` branch deploys to `/beta/` on
-the same Pages site (a push to either branch rebuilds both). Land work on
-`beta`, try it at `…/mancos/beta/`, then promote with
-`scripts/promote-beta.sh` — a fast-forward of `main` to the beta tip that
-refuses if the branches have diverged.
+Feel free to file issues on this project. For adding a new pack, if you want to provide the bundle, make sure to remove optional mods that add extraneous recipes (like text plates, LTN, cybersyn, especially editor extensions which pollutes the module interface)
 
 ## License
 

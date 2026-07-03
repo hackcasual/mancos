@@ -1,5 +1,9 @@
 # YAFC-Web: Port yafc-ce to the browser as C++/WebAssembly
 
+# Operating Guidelines
+
+Do not make changes to README.md, all text there is human authored
+
 # Human Priorities (2026-07-03) — tracked
 
 1. [x] (2026-07-03) Loading yafc projects — wire the Phase 2 serialization layer into the web app:
