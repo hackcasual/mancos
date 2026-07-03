@@ -20,6 +20,7 @@ class JsonWriter {
   explicit JsonWriter(nlohmann::json& out) : out_(out) {}
 
   bool Has(const char*) const { return false; }
+  bool HasString(const char*) const { return false; }
   void Prop(const char* name, const bool& v) { out_[name] = v; }
   void Prop(const char* name, const float& v) { out_[name] = v; }
   void Prop(const char* name, const double& v) { out_[name] = v; }
@@ -83,6 +84,10 @@ class JsonReader {
       : in_(in), db_(db), errors_(errors) {}
 
   bool Has(const char* name) const { return in_.contains(name); }
+  bool HasString(const char* name) const {
+    auto it = in_.find(name);
+    return it != in_.end() && it->is_string();
+  }
   void Prop(const char* name, bool& v) { Read(name, v); }
   void Prop(const char* name, float& v) { Read(name, v); }
   void Prop(const char* name, double& v) { Read(name, v); }
@@ -155,9 +160,18 @@ class JsonReader {
   }
 
   template <typename T>
-  T* Resolve(const std::string& typeDotName) {
+  T* Resolve(const std::string& reference) {
+    // Desktop yafc writes quality-wrapped refs as "!TypeDotName!quality";
+    // the quality dimension is not threaded through the web table yet, so
+    // resolve the target and drop the quality (normal assumed).
+    std::string typeDotName = reference;
+    if (!typeDotName.empty() && typeDotName[0] == '!') {
+      size_t bang = typeDotName.find('!', 1);
+      typeDotName = bang == std::string::npos ? typeDotName.substr(1)
+                                              : typeDotName.substr(1, bang - 1);
+    }
     T* typed = dynamic_cast<T*>(db_.FindByTypeDotName(typeDotName));
-    if (typed == nullptr) errors_.push_back("unresolved:" + typeDotName);
+    if (typed == nullptr) errors_.push_back("unresolved:" + reference);
     return typed;
   }
 
@@ -218,7 +232,12 @@ template <typename V>
 void VisitPage(ProjectPage& page, V& v) {
   v.Prop("guid", page.guid);
   v.Prop("name", page.name);
-  v.Prop("icon", page.icon);
+  // Desktop yafc may store a non-string icon; skip silently when so.
+  if constexpr (V::kReading) {
+    if (v.HasString("icon")) v.Prop("icon", page.icon);
+  } else {
+    v.Prop("icon", page.icon);
+  }
   v.PropObject("content", page.content,
                [](ProductionTable& t, auto& vv) { VisitTable(t, vv); });
 }

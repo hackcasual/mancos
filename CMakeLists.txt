@@ -10,6 +10,24 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+if(EMSCRIPTEN)
+  # Real C++ exceptions (native wasm EH, supported by all current engines)
+  # for yafc's own code: the throw/catch boundary at the wasm-core API edge
+  # (bad bundle files, bad game/mod folders picked by the user) must actually
+  # unwind, or the whole module aborts instead of returning a JSON error.
+  # Emscripten's default wasm codegen leaves try/catch as dead code otherwise.
+  # Scoped to C++ only (miniz/lua are C) and safe alongside the prebuilt
+  # or-tools/GLOP static libs: those are built without exceptions and never
+  # throw, and yafc::LpSolver already talks to GLOP via status codes, not
+  # exceptions, so no unwind ever needs to cross that boundary.
+  # Also for C (Lua's setjmp/longjmp-based lua_pcall): -fwasm-exceptions
+  # switches SUPPORT_LONGJMP to the matching wasm-EH-based mechanism too, so
+  # every TU using setjmp/longjmp needs the same flag or the link fails with
+  # undefined `emscripten_longjmp` (the old JS-based mechanism's symbol).
+  add_compile_options(-fwasm-exceptions)
+  add_link_options(-fwasm-exceptions)
+endif()
+
 # Prebuilt or-tools GLOP (see scripts/bootstrap.sh + solver-wasm/README.md)
 include(cmake/ortools_glop.cmake)
 
@@ -54,6 +72,8 @@ if(EMSCRIPTEN AND YAFC_WEB)
     # Resizable ArrayBuffers (default-on) break Firefox's TextDecoder on any
     # string crossing embind; use classic detach-on-grow memory instead.
     -sGROWABLE_ARRAYBUFFERS=0
+    # Emit the standardized try_table EH encoding (browsers deprecate 'try').
+    -sWASM_LEGACY_EXCEPTIONS=0
     -sEXPORTED_FUNCTIONS=_malloc,_free
     -sEXPORTED_RUNTIME_METHODS=HEAPU8
     -sENVIRONMENT=web,worker,node)
@@ -70,6 +90,8 @@ if(EMSCRIPTEN AND YAFC_WEB)
     --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcBundlerModule
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152
     -sGROWABLE_ARRAYBUFFERS=0
+    # Emit the standardized try_table EH encoding (browsers deprecate 'try').
+    -sWASM_LEGACY_EXCEPTIONS=0
     -sENVIRONMENT=worker
     -lworkerfs.js
     "SHELL:--pre-js ${CMAKE_SOURCE_DIR}/web/bundler_pre.js"

@@ -337,9 +337,10 @@ static std::string projectLoad(std::string text) {
     ProductionLink* copy = g_table->AddLink(link->goods, link->amount);
     copy->algorithm = link->algorithm;
     if (link->amount != 0) {
+      // Desktop projects store per-second amounts; the UI state is per-minute.
       goals.push_back(json{{"tdn", link->goods.target->typeDotName()},
                            {"name", link->goods.target->locName},
-                           {"perMin", link->amount}});
+                           {"perMin", link->amount * 60}});
     } else {
       linked.push_back(link->goods.target->typeDotName());
     }

@@ -269,6 +269,35 @@ Recipe + status: `solver-wasm/README.md`.
      redistribution; anything encumbered (base game assets, restrictive mods) stays in
      user-generated local bundles — the user bundles their own bought assets. This
      resolves Key risk #5 by construction.
+   - [x] Browser bundler page shipped 2026-07-03: `src/web/bundler_web_api.cc`
+     (embind: `runBundler(dataPath, modsPath, progress)` + `bundleBytes()`) is the same
+     pipeline as the CLI (`yafc_bundler`), built as a second wasm module
+     (`yafc_bundler_web`, worker-only — `-sENVIRONMENT=worker`, `-lworkerfs.js`) with
+     yafc's own env Lua files baked in via `--embed-file` at `/env` (the page never asks
+     for those, only the user's data/mods folders). `web/bundler.html`/`bundler.js` grant
+     read access via `showDirectoryPicker()` (File System Access API — Chromium-only,
+     feature-detected with a fallback message); `web/bundler-worker.js` receives the
+     picked `FileSystemDirectoryHandle`s (structured-cloneable, so the possibly-huge
+     directory walk happens off the main thread), builds a WORKERFS file list (relative
+     paths faked via `new File([handle], path)`, no eager reads — WORKERFS reads lazily
+     per chunk via `FileReaderSync`), and mounts it (`web/bundler_pre.js`'s
+     `Module.mountFS`, injected via `--pre-js` so it can see the bare `FS`/`WORKERFS`
+     runtime symbols without exporting them). Output crosses back as a transferred
+     ArrayBuffer, saved via `showSaveFilePicker()` (download-link fallback). A fresh
+     worker spins up per run since an aborted wasm instance can't be reused.
+     Fixed along the way: the wasm build had exceptions silently disabled (Emscripten's
+     default leaves `try`/`catch` dead code), so C++ error paths — bad bundle files, bad
+     game/mod folders — aborted the whole module instead of returning a JSON error; now
+     built with `-fwasm-exceptions` project-wide (CMakeLists.txt), matched with
+     `SUPPORT_LONGJMP` staying wasm-EH-based too (needed for Lua's `lua_pcall`). Doesn't
+     touch or-tools/GLOP's own (exception-free) codegen — `yafc::LpSolver` already talks
+     to it via status codes, so no unwind ever crosses that boundary; full wasm/native
+     test suites pass unchanged (golden numbers verified) after the flag change.
+     Not yet exercised in a real browser (no headless-browser tooling in this sandbox) —
+     validated via a Node smoke test with `FileReaderSync`-independent checks (module
+     loads, embind bindings callable, error path returns JSON) and the existing
+     wasm/node data-stage tests; still needs a real Chromium pass against actual game
+     files before calling it done-done.
 
 ## Phase 5 — Product & packaging
 

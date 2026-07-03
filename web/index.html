@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>YAFC Web — factory planner</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%231c2129'/%3E%3Cpath d='M16 9a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6z' fill='%234f9dd0'/%3E%3Cpath d='M15 4h2v4h-2zM15 24h2v4h-2zM4 15h4v2H4zM24 15h4v2h-4z' fill='%23e8b23c'/%3E%3C/svg%3E">
 <style>
   :root {
     color-scheme: dark;
@@ -148,6 +149,7 @@
     text-align: center; color: var(--muted); margin-top: 10vh;
   }
   #dropHint code { font-family: var(--mono); color: var(--blueprint); }
+  #dropHint a { color: var(--blueprint); }
   @media (prefers-reduced-motion: no-preference) {
     .plate { transition: border-color .15s ease; }
   }
@@ -189,8 +191,8 @@
   <div id="right">
     <div id="dropHint">
       <p><strong>Load a bundle to start planning.</strong></p>
-      <p>Bundles are built from your own game files with<br>
-      <code>yafc-bundler &lt;data&gt; &lt;mods&gt; &lt;env&gt; out.yafcbundle</code></p>
+      <p>No bundle yet? <a href="./bundler.html">Build one from your own game files</a> —
+      runs entirely in your browser, nothing is uploaded.</p>
     </div>
     <div id="workspace" hidden>
       <div class="row" style="padding:0">

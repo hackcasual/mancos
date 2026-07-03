@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>YAFC Bundler — build a bundle from your game files</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1c2129; --panel: #262c36; --panel-edge: #333b48;
+    --blueprint: #4f9dd0; --signal-green: #57c357; --signal-red: #e04a4a;
+    --signal-amber: #e8b23c; --ink: #e6e3dc; --muted: #8d96a3;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, monospace;
+    --condensed: "Barlow Semi Condensed", "Arial Narrow", "Helvetica Neue",
+                 system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header {
+    display: flex; gap: 14px; align-items: baseline; padding: 10px 18px;
+    background: var(--panel); border-bottom: 1px solid var(--panel-edge);
+  }
+  header h1 {
+    margin: 0; font-family: var(--condensed); font-size: 17px; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase;
+  }
+  header h1 span { color: var(--blueprint); }
+  header a { color: var(--muted); font-size: 13px; margin-left: auto; text-decoration: none; }
+  header a:hover { color: var(--ink); }
+
+  main {
+    max-width: 640px; margin: 0 auto; padding: 24px 20px 60px;
+  }
+  p.lede { color: var(--muted); margin-top: 0; }
+  p.lede code { font-family: var(--mono); color: var(--blueprint); }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 4px;
+    padding: 16px 18px; margin-top: 16px;
+  }
+  .eyebrow {
+    font-family: var(--condensed); font-size: 11px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--blueprint);
+    margin: 0 0 10px;
+  }
+  .picker-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; }
+  .picker-row .label { width: 150px; flex: none; font-family: var(--condensed); font-weight: 600; }
+  .picker-row .value { color: var(--muted); font-family: var(--mono); font-size: 12.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+  button {
+    background: #33507a; color: var(--ink); border: 1px solid #45699c;
+    border-radius: 3px; padding: 6px 13px; cursor: pointer; font: 600 13px var(--condensed);
+    letter-spacing: .04em;
+  }
+  button:hover:not(:disabled) { background: #3c5d8e; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--blueprint); outline-offset: 1px; }
+  button.small { padding: 2px 8px; font-size: 12px; }
+  button.ghost { background: transparent; border-color: var(--panel-edge); color: var(--muted); }
+  button.ghost:hover:not(:disabled) { color: var(--ink); border-color: var(--muted); }
+  button.primary { background: var(--blueprint); border-color: #6cb4e6; color: #0d1218; }
+  button.primary:hover:not(:disabled) { background: #63acdc; }
+
+  #log {
+    font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap;
+    background: #14181f; border: 1px solid var(--panel-edge); border-radius: 3px;
+    padding: 10px; max-height: 220px; overflow-y: auto; color: var(--muted);
+  }
+  .row { display: flex; gap: 10px; padding: 2px 0; }
+  .row .muted { width: 110px; flex: none; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  #unsupported {
+    border-left: 3px solid var(--signal-amber); background: rgba(232,178,60,.08);
+    padding: 12px 14px; border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>YAFC <span>BUNDLER</span></h1>
+  <a href="./index.html">← back to planner</a>
+</header>
+<main>
+  <p class="lede">
+    Builds a self-contained bundle from your own copy of Factorio (the parsed
+    prototype database, extracted icons, and locale text) that the
+    <a href="./index.html">planner</a> can load offline — it never reads game
+    files itself. Nothing is uploaded: your data folder is read directly in
+    this tab and the bundle is produced entirely on your machine.
+  </p>
+
+  <div id="unsupported" hidden>
+    <strong>This browser can't grant folder access.</strong>
+    The bundler needs the File System Access API
+    (<code>showDirectoryPicker</code>), currently available in Chromium-based
+    browsers (Chrome, Edge). Open this page in Chrome or Edge, or build a
+    bundle with the <code>yafc_bundler</code> command-line tool instead.
+  </div>
+
+  <div id="picker">
+    <div class="card">
+      <div class="eyebrow">Pick your Factorio folders</div>
+      <div class="picker-row">
+        <span class="label">Data folder</span>
+        <span class="value" id="dataFolder">(not picked)</span>
+        <button id="dataBtn" class="small">Choose…</button>
+      </div>
+      <div class="picker-row">
+        <span class="label">Mods folder</span>
+        <span class="value" id="modsFolder">(vanilla — no mods folder)</span>
+        <button id="modsBtn" class="small">Choose…</button>
+        <button id="modsClear" class="small ghost" hidden>Clear</button>
+      </div>
+      <p class="lede" style="margin:10px 0 0;font-size:12.5px">
+        Data folder is Factorio's install <code>data/</code> directory
+        (contains <code>core/</code> and <code>base/</code>). Mods folder is
+        your Factorio <code>mods/</code> directory (contains
+        <code>mod-list.json</code>) — leave unpicked to bundle vanilla only.
+        Access is granted for this browser tab only.
+      </p>
+      <button id="buildBtn" class="primary" style="margin-top:12px" disabled>Build bundle</button>
+    </div>
+
+    <div class="card" id="progressWrap" hidden>
+      <div class="eyebrow">Progress</div>
+      <div id="log"></div>
+    </div>
+
+    <div class="card" id="result" hidden></div>
+  </div>
+</main>
+<script type="module" src="bundler.js"></script>
+</body>
+</html>

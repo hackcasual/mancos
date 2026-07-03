@@ -133,6 +133,29 @@ TEST_CASE("unknown properties and unresolvable references degrade gracefully") {
   CHECK(loaded.project->pages[0]->content.recipes[0]->recipe == w.smelt);
 }
 
+TEST_CASE("desktop quality-wrapped references resolve") {
+  SerWorld w;
+  const char* text = R"({
+    "pages": [{
+      "name": "P",
+      "icon": {"some": "object"},
+      "content": {
+        "links": [{"goods": "!Item.plate!normal", "amount": 0.5}],
+        "recipes": [{"recipe": "!Recipe.smelt!rare"}]
+      }
+    }]
+  })";
+  LoadResult loaded = LoadProjectFromString(text, w.db);
+  REQUIRE(loaded.project != nullptr);
+  CHECK(loaded.errors.empty());  // icon object tolerated silently
+  ProductionTable& table = loaded.project->pages[0]->content;
+  REQUIRE(table.links.size() == 1);
+  CHECK(table.links[0]->goods.target == w.plate);
+  CHECK(table.links[0]->amount == doctest::Approx(0.5));
+  REQUIRE(table.recipes.size() == 1);
+  CHECK(table.recipes[0]->recipe == w.smelt);
+}
+
 TEST_CASE("undo and redo restore project snapshots") {
   SerWorld w;
   auto project = w.MakeProject();

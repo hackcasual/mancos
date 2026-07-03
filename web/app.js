@@ -120,7 +120,8 @@ function restore() {
 async function rebuildAndSolve() {
   persist();
   await rpc('tableClear');
-  for (const goal of goals) await rpc('tableAddLink', goal.tdn, goal.perMin);
+  // Table units are per SECOND (desktop yafc compatible); UI shows /min.
+  for (const goal of goals) await rpc('tableAddLink', goal.tdn, goal.perMin / 60);
   for (const tdn of linked) await rpc('tableAddLink', tdn, 0);
   for (const row of rows) await rpc('tableAddRecipe', row.tdn);
   renderSolve(await rpc('tableSolve'));
@@ -164,12 +165,12 @@ async function renderSolve(result) {
   const plates = await Promise.all(result.rows.map(async (row, i) => {
     const flows = row.flows.map((f) =>
         `<span class="flow ${f.perMin >= 0 ? 'pos' : 'neg'}">` +
-        `${fmt(f.perMin)} ${esc(short(f.tdn))}</span>`).join('');
+        `${fmt(f.perMin * 60)} ${esc(short(f.tdn))}</span>`).join('');
     return `<div class="plate${row.warnings ? ' warn' : ''}">
       <div class="head">${await iconImg(row.recipe.tdn)}
         <span class="name" title="${esc(row.recipe.tdn)}">${esc(row.recipe.locName)}</span>
         ${row.warnings ? '<span title="solver warning">⚠</span>' : ''}
-        <span class="crafts">${fmt(row.craftsPerMin)}<small>crafts/min</small></span>
+        <span class="crafts">${fmt(row.craftsPerMin * 60)}<small>crafts/min</small></span>
         <button class="x" data-row-x="${i}" aria-label="Remove row">✕</button>
       </div>
       <div class="flows">${flows}</div>
@@ -187,7 +188,7 @@ async function renderSolve(result) {
     const unlink = isGoal ? '' :
         `<button class="x" data-unlink="${l.tdn}" aria-label="Unlink">✕</button>`;
     return `<span class="pill${bad ? ' bad' : ''}" title="${bad ? 'unmatched — needs both a producer and a consumer in-table' : 'matched'}">
-        ${esc(l.name)} <span class="amt">${fmt(l.flow)}/min</span>${unlink}</span>`;
+        ${esc(l.name)} <span class="amt">${fmt(l.flow * 60)}/min</span>${unlink}</span>`;
   });
   $('#links').innerHTML = linkPills.join('') || '<span class="muted">—</span>';
   for (const btn of $('#links').querySelectorAll('[data-unlink]')) {
@@ -203,7 +204,7 @@ async function renderSolve(result) {
       .sort((a, b) => a.perMin - b.perMin)
       .map(async (f) =>
       `<div class="row">${await iconImg(f.tdn)}` +
-      `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin)}/min</span>` +
+      `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin * 60)}/min</span>` +
       `<span>${esc(f.name)}</span>` +
       `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}">` +
       `${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
@@ -334,9 +335,16 @@ $('#exportBtn').onclick = async () => {
   a2.click();
 };
 $('#importBtn').onclick = () => $('#projectFile').click();
-$('#projectFile').onchange = async (e) => {
+$('#projectFile').onchange = (e) => {
   const file = e.target.files[0];
-  if (file) importProjectText(await file.text());
+  if (!file) return;
+  // FileReader instead of file.text(): some mounts/browsers abort the
+  // Promise-based read; this path surfaces real errors in the status line.
+  const reader = new FileReader();
+  reader.onerror = () => status(`could not read ${file.name}: ${reader.error?.message}`);
+  reader.onload = () => importProjectText(reader.result);
+  reader.readAsText(file);
+  e.target.value = '';
 };
 
 async function loadProjectFromUrl() {
@@ -501,7 +509,8 @@ async function initPacks() {
       `</button>`).join(' ');
   $('#dropHint').insertAdjacentHTML('afterbegin',
       `<p><strong>Choose a modpack</strong></p><p>${packList}</p>
-       <p class="muted">or load your own bundle below</p>`);
+       <p class="muted">or load your own bundle below, or
+       <a href="./bundler.html">build one from your game files</a></p>`);
   for (const btn of $('#dropHint').querySelectorAll('[data-pack]')) {
     btn.onclick = () => loadPack(btn.dataset.pack, btn.dataset.file);
   }
