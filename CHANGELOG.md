@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.3 — 2026-07-03
 
 - New project icon (the alpaca): favicon on both pages and the PWA/install
   icons.
