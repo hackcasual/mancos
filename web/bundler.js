@@ -29,7 +29,7 @@ function log(line) {
 
 async function pickFolder(kind) {
   try {
-    const handle = await window.showDirectoryPicker({ id: `yafc-${kind}`, mode: 'read' });
+    const handle = await window.showDirectoryPicker({ id: `mancos-${kind}`, mode: 'read' });
     if (kind === 'data') {
       dataHandle = handle;
       $('#dataFolder').textContent = handle.name;

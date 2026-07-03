@@ -280,6 +280,13 @@ Recipe + status: `solver-wasm/README.md`.
    Verdict: skip libwebp integration for now. NEXT biggest lever: locale files are
    6.33 MB = 40% of the bundle (55 languages) — split locales out of the bundle or
    lazy-load only the browser language.
+   Increment 7 (2026-07-03): PRODUCT RENAMED TO "MANCOS" (user directive, ship
+   cleanup): page titles/headers, localStorage keys (mancos:* with one-time yafc:*
+   migration), provenance line on the landing panel. "yafc" stays wherever it means
+   the upstream project/data models (comments, Yafc.Model paths, namespace yafc,
+   cmake targets) and in file formats (.yafc, .yafcbundle). Undo/redo shipped
+   (100-deep pages-state snapshots, Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y + header buttons,
+   per-bundle history, headless-Chrome verified).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

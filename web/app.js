@@ -2,6 +2,17 @@
 // This pass: composited layered icons, nameplate rows with remove, goal
 // editing, unlink, candidate auto-pull on flows, per-bundle persistence.
 
+// One-time storage migration: the app shipped briefly as "yafc web" before
+// the mancos rename; carry projects/settings across without data loss.
+for (const key of Object.keys(localStorage)) {
+  if (key.startsWith('yafc:')) {
+    const renamed = 'mancos:' + key.slice('yafc:'.length);
+    if (localStorage.getItem(renamed) === null) {
+      localStorage.setItem(renamed, localStorage.getItem(key));
+    }
+  }
+}
+
 const worker = new Worker('./worker.js', { type: 'module' });
 let nextId = 1;
 const pending = new Map();
@@ -643,7 +654,7 @@ window.addEventListener('hashchange', () => {
 
 // ---- language: browser auto-detection + selector ----
 function pickLanguage(available) {
-  const saved = localStorage.getItem('yafc:lang');
+  const saved = localStorage.getItem('mancos:lang');
   if (saved && available.includes(saved)) return saved;
   // navigator.languages: try exact match (zh-CN), then base code (de-DE -> de).
   for (const pref of navigator.languages ?? [navigator.language]) {
@@ -656,7 +667,7 @@ function pickLanguage(available) {
 
 async function applyLanguage(lang) {
   await rpc('setLanguage', lang);
-  localStorage.setItem('yafc:lang', lang);
+  localStorage.setItem('mancos:lang', lang);
   iconUrlCache.clear();  // names changed; icon canvases are name-independent but cheap
   await rebuildAndSolve();
   $('#results').innerHTML = '';
@@ -1022,7 +1033,7 @@ async function initPacks() {
   } catch { /* no hosted packs: file-only mode */ }
   if (!manifest?.packs?.length) return;
 
-  const last = localStorage.getItem('yafc:lastPack');
+  const last = localStorage.getItem('mancos:lastPack');
   const packList = manifest.packs.map((p) =>
       `<button data-pack="${p.id}" data-file="${esc(p.file)}">` +
       `${esc(p.name)} <span class="muted mono">${(p.bytes / 1e6).toFixed(0)} MB</span>` +
@@ -1049,9 +1060,9 @@ async function loadBundleBuffer(buffer, label, packId) {
   status(`loading ${label} (${(buffer.byteLength / 1e6).toFixed(1)} MB)…`);
   const info = await rpc('loadBundle', buffer);
   if (info.error) { status(`load failed: ${info.error}`); return; }
-  if (packId) localStorage.setItem('yafc:lastPack', packId);
+  if (packId) localStorage.setItem('mancos:lastPack', packId);
   status(`${info.objects} objects · ${info.recipes} recipes · factorio ${info.meta.factorioVersion}`);
-  bundleKey = 'yafc:' + JSON.stringify(info.meta.mods ?? label);
+  bundleKey = 'mancos:' + JSON.stringify(info.meta.mods ?? label);
   // History is per-bundle: undoing into another pack's pages would resolve
   // against the wrong database.
   undoStack.length = 0;
