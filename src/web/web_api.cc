@@ -116,6 +116,7 @@ json RecipeBrief(const RecipeOrTechnology* r) {
              {"cost", CostOf(r)},       {"available", IsAvailable(r)},
              {"unlockedBy", std::move(unlockedBy)},
              {"in", std::move(in)},     {"out", std::move(out)}};
+  if (r->specialType != FactorioObjectSpecialType::Normal) brief["special"] = true;
   AddMilestoneInfo(brief, r);
   return brief;
 }
@@ -125,9 +126,13 @@ json RecipeBrief(const RecipeOrTechnology* r) {
 // beyond-current-milestones < statically inaccessible.
 int RecipeRank(const RecipeOrTechnology* r) {
   if (g_milestones != nullptr) {
-    if (!g_milestones->IsAccessible(r)) return 3;
-    if (!g_milestones->IsAccessibleWithCurrentMilestones(r)) return 2;
+    if (!g_milestones->IsAccessible(r)) return 4;
+    if (!g_milestones->IsAccessibleWithCurrentMilestones(r)) return 3;
   }
+  // Barreling/voiding/stacking pseudo-recipes rank below real production
+  // (desktop: DataUtils sorts specialType != Normal last) — otherwise
+  // auto-pull happily "produces" a fluid by emptying its own barrels.
+  if (r->specialType != FactorioObjectSpecialType::Normal) return 2;
   return IsAvailable(r) ? 0 : 1;
 }
 
@@ -209,11 +214,17 @@ static std::string goodsInfo(std::string tdn) {
 
 static void tableClear() { g_table = std::make_unique<ProductionTable>(); }
 
-static std::string tableAddLink(std::string tdn, double amountPerMinute) {
+// algorithm: 0 Match, 1 AllowOverProduction, 2 AllowOverConsumption
+// (LinkAlgorithm order; desktop exposes the same per-link setting).
+static std::string tableAddLink(std::string tdn, double amountPerSecond,
+                                int algorithm) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* g = dynamic_cast<Goods*>(Db().FindByTypeDotName(tdn));
   if (g == nullptr) return Err("unknown goods " + tdn);
-  g_table->AddLink({g, nullptr}, amountPerMinute);
+  ProductionLink* link = g_table->AddLink({g, nullptr}, amountPerSecond);
+  if (algorithm >= 0 && algorithm <= 2) {
+    link->algorithm = static_cast<LinkAlgorithm>(algorithm);
+  }
   return json{{"ok", true}}.dump();
 }
 
@@ -455,6 +466,7 @@ static std::string tableSolve() {
                          {"name", link->goods.target->locName},
                          {"amount", link->amount},
                          {"flow", link->linkFlow},
+                         {"algo", static_cast<int>(link->algorithm)},
                          {"flags", link->flags}});
   }
   json flows = json::array();
@@ -608,17 +620,30 @@ static std::string projectSaveAll(std::string pagesJson) {
   for (const json& p : pages) {
     auto page = std::make_unique<ProjectPage>();
     page->name = p.value("name", "Page");
+    // linkAlgos: sparse {tdn: 0|1|2} applying to both goal and plain links.
+    json linkAlgos = p.value("linkAlgos", json::object());
+    auto algoOf = [&](const std::string& tdn) {
+      auto it = linkAlgos.find(tdn);
+      int algo = it != linkAlgos.end() && it->is_number() ? it->get<int>() : 0;
+      return algo >= 0 && algo <= 2 ? static_cast<LinkAlgorithm>(algo)
+                                    : LinkAlgorithm::Match;
+    };
     for (const json& goal : p.value("goals", json::array())) {
       auto* goods = dynamic_cast<Goods*>(
           Db().FindByTypeDotName(goal.value("tdn", "")));
       if (goods == nullptr) continue;
       // UI state is per-minute; .yafc stores per-second (desktop units).
-      page->content.AddLink({goods, nullptr}, goal.value("perMin", 0.0) / 60.0);
+      ProductionLink* link =
+          page->content.AddLink({goods, nullptr}, goal.value("perMin", 0.0) / 60.0);
+      link->algorithm = algoOf(goods->typeDotName());
     }
     for (const json& tdn : p.value("linked", json::array())) {
       auto* goods = dynamic_cast<Goods*>(
           Db().FindByTypeDotName(tdn.get<std::string>()));
-      if (goods != nullptr) page->content.AddLink({goods, nullptr}, 0);
+      if (goods != nullptr) {
+        page->content.AddLink({goods, nullptr}, 0)->algorithm =
+            algoOf(goods->typeDotName());
+      }
     }
     for (const json& row : p.value("rows", json::array())) {
       auto* recipe = dynamic_cast<RecipeOrTechnology*>(
@@ -670,8 +695,13 @@ static std::string projectLoad(std::string text) {
   for (const auto& pagePtr : loaded.project->pages) {
     ProductionTable& source = pagePtr->content;
     json goals = json::array(), linked = json::array(), rows = json::array();
+    json linkAlgos = json::object();
     for (const auto& link : source.links) {
       if (link->goods.target == nullptr) continue;
+      if (link->algorithm != LinkAlgorithm::Match) {
+        linkAlgos[link->goods.target->typeDotName()] =
+            static_cast<int>(link->algorithm);
+      }
       if (link->amount != 0) {
         goals.push_back(json{{"tdn", link->goods.target->typeDotName()},
                              {"name", link->goods.target->locName},
@@ -703,6 +733,7 @@ static std::string projectLoad(std::string text) {
                   {"goals", std::move(goals)},
                   {"linked", std::move(linked)},
                   {"rows", std::move(rows)}};
+    if (!linkAlgos.empty()) pageJson["linkAlgos"] = std::move(linkAlgos);
     const ModuleFillerParameters& f = source.settings.filler;
     if (f.fillerModule != nullptr || f.beacon != nullptr || f.fillMiners) {
       json filler{{"fillMiners", f.fillMiners},

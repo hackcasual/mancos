@@ -287,6 +287,21 @@ Recipe + status: `solver-wasm/README.md`.
    cmake targets) and in file formats (.yafc, .yafcbundle). Undo/redo shipped
    (100-deep pages-state snapshots, Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y + header buttons,
    per-bundle history, headless-Chrome verified).
+   Increment 8 (2026-07-03): solver stress (user directive: nuclear sample, P-238 from
+   spent uranium cells, vary over-production). Link algorithms exposed end-to-end:
+   tableAddLink(tdn, perSec, algo 0/1/2), =/≥/≤ toggle on link pills (dashed border
+   when loose), linkAlgos per page persisted + .yafc round-trip. Findings
+   (scratchpad/stress_nuclear.mjs vs pyanodon): isotope separation ratios exact
+   (1/min pu-238 -> 3.333/min seperation = 1/0.3); zero-sum recursive cycles (barrel
+   pairs, purex waste-washing) get kDeadlockCandidate warnings while status stays Ok
+   (desktop-like slack behavior); no numerical failures in any config; spent-fuel
+   demand correctly drives reactor rate via the fuelResult product. Fixed from
+   findings: barreling/voiding pseudo-recipes now rank below real production and are
+   excluded from auto-pick (desktop DataUtils parity) — auto-pull was "producing"
+   fluids by emptying their own barrels. Semantics note: an over-production link with
+   NO consumer still reports unmatched (desktop parity) — pure surpluses should stay
+   unlinked. Full PUREX auto-closure needs consumer-pull (washing loops recycle
+   upward), queued with the dependency-explorer work.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

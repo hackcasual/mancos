@@ -114,7 +114,16 @@ let rows = pages[0].rows;     // {tdn}
 let bundleKey = null;
 
 function newPage(name) {
-  return { name, goals: [], linked: [], rows: [] };
+  return { name, goals: [], linked: [], rows: [], linkAlgos: {} };
+}
+// Sparse {tdn: 1|2}: 1 = over-production allowed, 2 = over-consumption
+// allowed; absent = exact match (desktop per-link setting).
+const linkAlgoOf = (tdn) => pages[activePage].linkAlgos?.[tdn] ?? 0;
+function setLinkAlgo(tdn, algo) {
+  const page = pages[activePage];
+  page.linkAlgos ??= {};
+  if (algo) page.linkAlgos[tdn] = algo;
+  else delete page.linkAlgos[tdn];
 }
 function bindActivePage() {
   const page = pages[activePage];
@@ -262,8 +271,10 @@ async function rebuildAndSolve() {
   const filler = pages[activePage].filler;
   if (filler) await rpc('tableSetFiller', JSON.stringify(filler));
   // Table units are per SECOND (desktop yafc compatible); UI shows /min.
-  for (const goal of goals) await rpc('tableAddLink', goal.tdn, goal.perMin / 60);
-  for (const tdn of linked) await rpc('tableAddLink', tdn, 0);
+  for (const goal of goals) {
+    await rpc('tableAddLink', goal.tdn, goal.perMin / 60, linkAlgoOf(goal.tdn));
+  }
+  for (const tdn of linked) await rpc('tableAddLink', tdn, 0, linkAlgoOf(tdn));
   // Rows carry per-project choices ('' / missing = favorite-or-first
   // defaults): a reactor burning mox vs uranium cells is a different chain.
   for (const row of rows) {
@@ -384,20 +395,36 @@ async function renderSolve(result) {
   }
 
   // Links: neutral pills; unmatched marked red; x unlinks (goals excluded).
+  // The =/≥/≤ toggle cycles the link algorithm (match / over-production OK /
+  // over-consumption OK) — key for recursive chains with byproducts.
+  const ALGO = [
+    { symbol: '=', label: 'Exact match — click to allow over-production' },
+    { symbol: '≥', label: 'Over-production allowed — click to allow over-consumption' },
+    { symbol: '≤', label: 'Over-consumption allowed — click for exact match' },
+  ];
   const linkPills = result.links.map((l) => {
     const isGoal = goals.some((g) => g.tdn === l.tdn);
     const bad = (l.flags & 1) !== 0;
+    const algo = l.algo ?? 0;
     const unlink = isGoal ? '' :
         `<button class="x" data-unlink="${l.tdn}" aria-label="Unlink">✕</button>`;
-    return `<span class="pill${bad ? ' bad' : ''}" title="${bad ? 'unmatched — needs both a producer and a consumer in-table' : 'matched'}">
+    return `<span class="pill${bad ? ' bad' : ''}${algo ? ' loose' : ''}" title="${bad ? 'unmatched — needs both a producer and a consumer in-table' : 'matched'}">
         <button class="chip" data-goods="${l.tdn}">${esc(l.name)}</button>
+        <button class="small ghost algo" data-algo="${l.tdn}" title="${ALGO[algo].label}">${ALGO[algo].symbol}</button>
         <span class="amt">${fmt(l.flow * 60)}/min</span>${unlink}</span>`;
   });
   $('#links').innerHTML = linkPills.join('') || '<span class="muted">—</span>';
   for (const btn of $('#links').querySelectorAll('[data-unlink]')) {
     btn.onclick = () => {
       pages[activePage].linked = linked.filter((tdn) => tdn !== btn.dataset.unlink);
+      setLinkAlgo(btn.dataset.unlink, 0);
       bindActivePage();
+      rebuildAndSolve();
+    };
+  }
+  for (const btn of $('#links').querySelectorAll('[data-algo]')) {
+    btn.onclick = () => {
+      setLinkAlgo(btn.dataset.algo, (linkAlgoOf(btn.dataset.algo) + 1) % 3);
       rebuildAndSolve();
     };
   }
@@ -442,9 +469,10 @@ async function pullCandidates(tdn, wantProducers) {
   const info = await rpc('goodsInfo', tdn);
   const list = wantProducers ? info.producers : info.consumers;
   // API pre-sorts: available first, then yafc cost ascending. Auto-pick never
-  // grabs a recipe that is research- or milestone-locked.
+  // grabs a recipe that is research- or milestone-locked, or a barreling/
+  // voiding pseudo-recipe.
   const available = list.filter((r) =>
-      r.available !== false && !r.milestone && !r.inaccessible);
+      r.available !== false && !r.milestone && !r.inaccessible && !r.special);
   if (available.length === 1) {
     rows.push({ tdn: available[0].tdn });
     await rebuildAndSolve();
@@ -569,6 +597,7 @@ async function applyLoadedProject(state) {
     linked: p.linked,
     rows: p.rows,          // rows keep entity/fuel/modules mirrors verbatim
     filler: p.filler,      // page-level module defaults, if any
+    linkAlgos: p.linkAlgos ?? {},
   }));
   activePage = 0;
   bindActivePage();
