@@ -8,6 +8,9 @@ add_library(yafc_core
   yafc/model/data_classes.cc
   yafc/model/database.cc
   yafc/model/production_table.cc
+  yafc/parser/data_deserializer.cc
+  yafc/parser/data_deserializer_entity.cc
+  yafc/parser/data_deserializer_recipes.cc
   yafc/parser/factorio_data_source.cc
   yafc/parser/lua_context.cc
   yafc/parser/property_tree.cc

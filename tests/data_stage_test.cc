@@ -144,3 +144,93 @@ TEST_CASE("FULL modded data stage (93 mods)" * doctest::skip(kModsRoot2.empty())
   CHECK(prototype("item", "grade-1-lead"));
   CHECK(prototype("recipe", "grade-1-lead"));
 }
+
+// ---------------------------------------------------------------------------
+// Deserializer: data.raw -> Database (Phase 3 final chunk).
+#include "yafc/analysis/automation_analysis.h"
+#include "yafc/analysis/milestones.h"
+#include "yafc/parser/data_deserializer.h"
+
+TEST_CASE("vanilla LoadData -> Database" * doctest::skip(kRoot.empty())) {
+  FactorioDataSource source(kRoot + "/data/factorio/data", "",
+                            kRoot + "/third_party/yafc-ce/Yafc/Data");
+  ParseResult stage = source.Parse();
+  LoadDataResult result =
+      DataDeserializer::LoadData(*stage.lua, stage.factorioVersion);
+  REQUIRE(result.db != nullptr);
+  Database& db = *result.db;
+
+  CHECK(db.recipes.count() > 200);
+  CHECK(db.items.count() > 200);
+  auto* ironPlate = dynamic_cast<Item*>(db.FindByTypeDotName("Item.iron-plate"));
+  REQUIRE(ironPlate != nullptr);
+  CHECK(!ironPlate->production.empty());
+  REQUIRE(!ironPlate->iconSpec.empty());
+  CHECK(ironPlate->iconSpec[0].path.find("__base__/") == 0);
+
+  // Special objects and synthesized recipes exist under upstream names.
+  CHECK(db.FindByTypeDotName("Power.electricity") != nullptr);
+  CHECK(db.FindByTypeDotName("Power.void") != nullptr);
+  CHECK(db.FindByTypeDotName("Mechanics.generator.electricity") != nullptr);
+  CHECK(db.voidEnergy != nullptr);
+  CHECK(db.science != nullptr);
+  CHECK(db.character != nullptr);
+  CHECK(db.qualityNormal != nullptr);
+
+  // Accessibility over the real database.
+  Dependencies deps;
+  deps.Calculate(db);
+  Milestones ms;
+  MilestonesInput input;
+  auto warnings = ms.Compute(db, deps, input);
+  CHECK(ms.IsAccessible(ironPlate));
+  CHECK(!warnings.mostObjectsInaccessible);
+}
+
+TEST_CASE("modded (py) LoadData -> Database" * doctest::skip(kModsRoot2.empty())) {
+  FactorioDataSource source(kModsRoot2 + "/data/factorio/data",
+                            kModsRoot2 + "/data/factorio/mods",
+                            kModsRoot2 + "/third_party/yafc-ce/Yafc/Data");
+  ParseResult stage = source.Parse();
+  LoadDataResult result =
+      DataDeserializer::LoadData(*stage.lua, stage.factorioVersion);
+  REQUIRE(result.db != nullptr);
+  Database& db = *result.db;
+  std::printf("  [deserialize] %d objects, %d recipes, %d items, %d errors\n",
+              db.objects.count(), db.recipes.count(), db.items.count(),
+              static_cast<int>(result.errors.size()));
+  for (size_t i = 0; i < result.errors.size() && i < 8; ++i) {
+    std::printf("  [deserialize] error: %s\n", result.errors[i].c_str());
+  }
+
+  CHECK(db.recipes.count() > 1000);
+  CHECK(db.items.count() > 1000);
+  CHECK(db.FindByTypeDotName("Item.ore-lead") != nullptr);
+  CHECK(db.FindByTypeDotName("Item.lead-plate") != nullptr);
+
+  auto* grade1 = dynamic_cast<Recipe*>(db.FindByTypeDotName("Recipe.grade-1-lead"));
+  REQUIRE(grade1 != nullptr);
+  REQUIRE(!grade1->ingredients.empty());
+  REQUIRE(!grade1->products.empty());
+  std::printf("  [grade-1-lead] time=%.2f\n", grade1->time);
+  for (const Ingredient& i : grade1->ingredients) {
+    std::printf("  [grade-1-lead] in:  %.3f x %s\n", i.amount, i.goods->name.c_str());
+  }
+  for (const Product& p : grade1->products) {
+    std::printf("  [grade-1-lead] out: %.3f x %s\n", p.amount, p.goods->name.c_str());
+  }
+  for (const FactorioIconPart& part : grade1->iconSpec) {
+    std::printf("  [grade-1-lead] icon: %s (size %d scale %.2f)\n", part.path.c_str(),
+                part.size, part.scale);
+  }
+  CHECK(!grade1->crafters.empty());
+
+  Dependencies deps;
+  deps.Calculate(db);
+  Milestones ms;
+  MilestonesInput input;
+  ms.Compute(db, deps, input);
+  auto* ironPlate = db.FindByTypeDotName("Item.iron-plate");
+  REQUIRE(ironPlate != nullptr);
+  CHECK(ms.IsAccessible(ironPlate));
+}

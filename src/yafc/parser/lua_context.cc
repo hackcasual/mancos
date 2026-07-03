@@ -450,6 +450,15 @@ std::vector<std::string> LuaContext::StringKeys(int tableRef) {
   return keys;
 }
 
+void LuaContext::Unref(int ref) { luaL_unref(L_, LUA_REGISTRYINDEX, ref); }
+
+int LuaContext::RawLen(int tableRef) {
+  lua_rawgeti(L_, LUA_REGISTRYINDEX, tableRef);
+  int len = static_cast<int>(lua_rawlen(L_, -1));
+  lua_pop(L_, 1);
+  return len;
+}
+
 void LuaContext::SetGlobalTable(
     const std::string& name,
     const std::vector<std::pair<std::string, LuaValue>>& entries) {

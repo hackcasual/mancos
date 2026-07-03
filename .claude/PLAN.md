@@ -168,10 +168,20 @@ Recipe + status: `solver-wasm/README.md`.
    presence) instead of upstream's always-false TODO; mod-fix hooks and locale files not
    ported (web i18n). Next: zipped mods (minizip), mod-settings.dat property tree,
    FactorioDataDeserializer (data.raw → Database).
-2. Mod handling: mod-list.json, dependency sort, versioned zips (libzip over OPFS/MEMFS),
-   mod-settings.dat (custom binary property-tree parser — straight port).
-3. Prototype → model deserialization (`Data/` subdir) and icon atlas (SDL_image decode,
-   layered icon compositing).
+2. Mod handling: [x] complete 2026-07-03 — mod-list.json + dependency sort (in 3.1),
+   zipped mods via miniz (`zip_archive.*`, upstream depth-1 info.json rule; all 91 corpus
+   zips discovered), mod-settings.dat property tree (`property_tree.*`) into the settings
+   global. FULL modded data stage (40-mod Pyanodon suite) green on native (~8s suite) and
+   wasm/node (~10s), lead-chain prototypes verified in data.raw.
+3. Prototype → model deserialization (`Data/` subdir) — in flight (background port).
+   Icon pipeline (decision 2026-07-03: icons ARE extracted for the web UI, no SDL):
+   the deserializer captures per-object iconSpec (mod-relative paths + layer
+   size/shift/tint/scale, upstream FactorioIconPart); a core extraction utility
+   resolves those paths through ModSet (zips/folders), dedupes PNGs by content hash,
+   and emits blobs + an icons.json manifest (typeDotName → layer list). The web layer
+   stores blobs in OPFS and composites layers on canvas at draw time (browser PNG
+   decode — no SDL_image). Hosted vanilla quickstart still gated on the game-asset
+   licensing question (PLAN "Key risks" #5).
 4. Browser data input UX: user picks Factorio `data/` + `mods/` via File System Access API /
    drag-drop / zip upload; mirror into OPFS; run data stage in a worker with progress UI.
    Vanilla-only quick start: prepackaged prototype dump downloaded from the site (check
@@ -192,6 +202,23 @@ Recipe + status: `solver-wasm/README.md`.
    yafc-ce's existing translation files as seed data.
 4. Screens incrementally: production table view first (usable milestone!), then
    milestones/settings/wizards/blueprints. Preferences in localStorage/OPFS.
+5. Pre-parsed popular mod bundles. Instead of requiring the user to point open local files
+   have a bundler that runs the parsing logic, serializes it and includes translation
+   strings/art assets. This could be pre-setup for a few popular mod packs and allow
+   a user to select their modpack combination of choice.
+   Implementation notes (2026-07-03):
+   - Needs **Database serialization** (dump/load the parsed Database itself, bypassing the
+     Lua data stage on load) — the C++ analogue of upstream's Cache.ReadCSharp/WriteCSharp,
+     which we skipped. Format: versioned binary or JSON via the existing serialization
+     visitor pattern; load path must rebuild id ranges + derived collections.
+   - Needs the **locale .cfg parser** (per-mod locale/<lang>/*.cfg INI-ish files) that we
+     skipped — bundles carry translation catalogs for the web i18n layer.
+   - Bundle = {database dump, icons.json manifest + deduped PNG blobs (Phase 3.3 extractor),
+     locale catalogs, modpack metadata incl. mod versions for cache keys}.
+   - The bundler is a native CLI target over the same yafc_core (dual-target build already
+     supports this); runs in CI or server-side, output served as static files.
+   - Licensing: per-mod licenses govern redistribution of mod assets/strings (check each
+     bundled pack); base-game assets remain user-supplied (risk #5) unless cleared.
 
 ## Phase 5 — Product & packaging
 

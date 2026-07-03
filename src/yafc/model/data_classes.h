@@ -87,6 +87,19 @@ struct TemperatureRange {
   bool operator==(const TemperatureRange&) const = default;
 };
 
+// Upstream FactorioIconPart: one layer of an object's icon. Pure data here;
+// PNG decode/compositing happens in the web layer.
+struct FactorioIconPart {
+  std::string path;
+  int size = 32;
+  float x = 0, y = 0, r = 1, g = 1, b = 1, a = 1;
+  float scale = 1;
+
+  bool IsSimple() const {
+    return x == 0 && y == 0 && r == 1 && g == 1 && b == 1 && a == 1 && scale == 1;
+  }
+};
+
 class FactorioObject {
  public:
   virtual ~FactorioObject() = default;
@@ -96,6 +109,7 @@ class FactorioObject {
   std::string locName;   // falls back to name at load end (upstream CalculateMaps)
   std::string locDescr;
   int iconId = 0;
+  std::vector<FactorioIconPart> iconSpec;
   FactorioId id = kInvalidFactorioId;
   FactorioObjectSpecialType specialType = FactorioObjectSpecialType::Normal;
   bool showInExplorers = true;
@@ -162,6 +176,12 @@ class Module : public Item {
   ModuleSpecification moduleSpecification;
 };
 
+class Ammo : public Item {
+ public:
+  std::vector<std::string> projectileNames;
+  std::optional<std::vector<std::string>> targetFilter;
+};
+
 class Fluid : public Goods {
  public:
   std::string originalName;  // name without temperature
@@ -169,7 +189,8 @@ class Fluid : public Goods {
   TemperatureRange temperatureRange;
   int temperature = 0;
   float heatValue = 0;
-  std::vector<Fluid*> variants;
+  // Shared across temperature clones (upstream: one List referenced by all).
+  std::shared_ptr<std::vector<Fluid*>> variants;
 
   std::string_view type() const override { return "Fluid"; }
   FactorioObjectSortOrder sortingOrder() const override {
@@ -190,7 +211,7 @@ class Special : public Goods {
   bool power = false;
   bool isVoid = false;
   int temperature = 0;
-  std::vector<Special*> variants;
+  std::shared_ptr<std::vector<Special*>> variants;
 
   bool isPower() const override { return power; }
   std::string_view type() const override { return power ? "Power" : "Special"; }
@@ -327,6 +348,7 @@ class Technology : public RecipeOrTechnology {
   bool unlocksFluidMining = false;
   FactorioObject* triggerObject = nullptr;
   std::vector<Entity*> triggerEntities;
+  Quality* triggerMinimumQuality = nullptr;
 
   std::string_view type() const override { return "Technology"; }
   FactorioObjectSortOrder sortingOrder() const override {
@@ -372,6 +394,7 @@ class Entity : public FactorioObject {
   int size = 0;
   Entity* spoilResult = nullptr;
   float baseSpoilTime = 0;
+  std::string autoplaceControl;
 
   std::string_view type() const override { return "Entity"; }
   FactorioObjectSortOrder sortingOrder() const override {
@@ -397,6 +420,21 @@ class EntityWithModules : public Entity {
   }
 };
 
+struct Effect {
+  float consumption = 0;
+  float speed = 0;
+  float productivity = 0;
+  float pollution = 0;
+  float quality = 0;
+};
+
+struct EffectReceiver {
+  Effect baseEffect;
+  bool usesModuleEffects = true;
+  bool usesBeaconEffects = true;
+  bool usesSurfaceEffects = true;
+};
+
 class EntityCrafter : public EntityWithModules {
  public:
   int itemInputs = 0;
@@ -405,6 +443,9 @@ class EntityCrafter : public EntityWithModules {
   std::vector<RecipeOrTechnology*> recipes;
   float baseCraftingSpeed = 1;
   float effectReceiverBaseProductivity = 0;
+  EffectReceiver effectReceiver;
+  int rocketInventorySize = 0;
+  bool hasVectorToPlaceResult = false;
 
   float CraftingSpeed(const Quality& quality) const;
 };
@@ -428,6 +469,39 @@ class EntityContainer : public Entity {
   int logisticSlotsCount = 0;
 };
 
+class EntityInserter : public Entity {
+ public:
+  float inserterSwingTime = 0;
+  bool isBulkInserter = false;
+};
+
+class EntityAccumulator : public Entity {
+ public:
+  float baseAccumulatorCapacity = 0;
+};
+
+class EntityReactor : public EntityCrafter {
+ public:
+  float reactorNeighborBonus = 1;
+};
+
+class EntityProjectile : public Entity {
+ public:
+  std::vector<std::string> placeEntities;
+};
+
+class EntitySpawner : public Entity {
+ public:
+  std::string capturedEntityName;  // empty = none
+};
+
+class EntityAttractor : public EntityCrafter {
+ public:
+  float range = 0;
+  float attractorEfficiency = 0;
+  float drain = 0;
+};
+
 class Tile : public FactorioObject {
  public:
   Fluid* fluidResult = nullptr;
@@ -443,10 +517,20 @@ class Location : public FactorioObject {
  public:
   std::vector<Technology*> technologyUnlock;
   std::vector<std::string> entitySpawns;
+  std::vector<std::string> placementControls;
 
   std::string_view type() const override { return "Location"; }
   FactorioObjectSortOrder sortingOrder() const override {
     return FactorioObjectSortOrder::Locations;
+  }
+};
+
+class ResearchTrigger : public FactorioObject {
+ public:
+  ResearchTrigger() { showInExplorers = false; }
+  std::string_view type() const override { return "Research trigger"; }
+  FactorioObjectSortOrder sortingOrder() const override {
+    return FactorioObjectSortOrder::Triggers;
   }
 };
 

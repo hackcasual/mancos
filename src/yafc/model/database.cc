@@ -115,7 +115,7 @@ void Database::LoadBuiltData(
   auto sci = objectsByTypeName.find("Item.science");
   science = sci == objectsByTypeName.end() ? nullptr
                                            : dynamic_cast<Item*>(sci->second);
-  auto ve = objectsByTypeName.find("Power.void-energy");
+  auto ve = objectsByTypeName.find("Power.void");
   voidEnergy = ve == objectsByTypeName.end() ? nullptr
                                              : dynamic_cast<Goods*>(ve->second);
 }

@@ -59,6 +59,8 @@ class LuaContext {
   LuaValue GetField(int tableRef, const std::string& key);
   LuaValue GetIndex(int tableRef, int index);
   std::vector<std::string> StringKeys(int tableRef);
+  void Unref(int ref);
+  int RawLen(int tableRef);
   void SetGlobalTable(const std::string& name,
                       const std::vector<std::pair<std::string, LuaValue>>& entries);
   int NewTableRef();
