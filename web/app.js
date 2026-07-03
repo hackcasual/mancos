@@ -56,21 +56,25 @@ async function iconUrl(tdn) {
       const scale = (layer.s || 1) * (layer.sz ? layers[0].sz / layer.sz : 1);
       const draw = kSize * (layer.sz * (layer.s || 1)) / baseSize;
       const off = [(layer.x || 0) * kSize / baseSize, (layer.y || 0) * kSize / baseSize];
+      // Icon files may append mip levels beside the base image (120x64 =
+      // 64+32+16+8): draw only the base square.
+      const srcSide = Math.min(bitmap.width, bitmap.height);
       let source = bitmap;
       const tinted = layer.r !== 1 || layer.g !== 1 || layer.b !== 1;
       if (tinted) {
-        const tint = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const tint = new OffscreenCanvas(srcSide, srcSide);
         const tctx = tint.getContext('2d');
-        tctx.drawImage(bitmap, 0, 0);
+        tctx.drawImage(bitmap, 0, 0, srcSide, srcSide, 0, 0, srcSide, srcSide);
         tctx.globalCompositeOperation = 'multiply';
         tctx.fillStyle = `rgb(${layer.r * 255},${layer.g * 255},${layer.b * 255})`;
         tctx.fillRect(0, 0, tint.width, tint.height);
         tctx.globalCompositeOperation = 'destination-in';
-        tctx.drawImage(bitmap, 0, 0);
+        tctx.drawImage(bitmap, 0, 0, srcSide, srcSide, 0, 0, srcSide, srcSide);
         source = tint;
       }
       ctx.globalAlpha = layer.a ?? 1;
-      ctx.drawImage(source, (kSize - draw) / 2 + off[0], (kSize - draw) / 2 + off[1],
+      ctx.drawImage(source, 0, 0, srcSide, srcSide,
+                    (kSize - draw) / 2 + off[0], (kSize - draw) / 2 + off[1],
                     draw, draw);
       ctx.globalAlpha = 1;
     }
