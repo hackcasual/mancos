@@ -1,0 +1,51 @@
+name: pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same cache as ci.yml: or-tools + emsdk + lua are ~40 min cold.
+      - name: Cache third_party
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: third-party-v1-${{ hashFiles('scripts/bootstrap.sh', 'patches/**') }}
+
+      - name: Bootstrap toolchains and deps
+        run: ./scripts/bootstrap.sh
+
+      # No game data on CI, so no bundles/ are published: the site ships in
+      # bring-your-own-bundle mode (the bundler page builds one client-side
+      # from the user's own game files — the split-app licensing stance).
+      - name: Build web app
+        run: ./scripts/build-web.sh
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

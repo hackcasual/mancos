@@ -1,0 +1,45 @@
+Mancos bundles or links the following third-party software.
+
+### YAFC: Community Edition (and the original YAFC by ShadowTheAge) ###
+https://github.com/Yafc-CE/yafc-ce
+https://github.com/ShadowTheAge/yafc
+
+Mancos is a C++/WebAssembly port of YAFC-CE's data model, analyses and
+production-table solver. Licensed under the GNU General Public License v3.0;
+see LICENSE.
+
+### Google OR-Tools (GLOP linear solver) ###
+https://github.com/google/or-tools
+Licensed under the Apache License, Version 2.0.
+
+### Lua 5.2.1 (with Factorio-compatibility patches) ###
+https://www.lua.org/
+Copyright (C) 1994-2012 Lua.org, PUC-Rio.
+Licensed under the MIT license.
+
+### Emscripten (build toolchain) ###
+https://emscripten.org/
+Licensed under the MIT license and the University of Illinois/NCSA
+Open Source License.
+
+### miniz ###
+https://github.com/richgel999/miniz
+Licensed under the MIT license.
+
+### nlohmann/json ###
+https://github.com/nlohmann/json
+Copyright (c) 2013-2025 Niels Lohmann.
+Licensed under the MIT license.
+
+### stb (stb_image, stb_image_write) ###
+https://github.com/nothings/stb
+Public domain (alternatively MIT licensed).
+
+### doctest (tests only) ###
+https://github.com/doctest/doctest
+Copyright (c) 2016-2023 Viktor Kirilov.
+Licensed under the MIT license.
+
+Factorio game data and assets are the property of Wube Software. Mancos
+never ships them: bundles are built locally by each user from their own
+copy of the game via the bundler.
