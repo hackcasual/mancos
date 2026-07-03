@@ -180,12 +180,14 @@ static std::string searchGoods(std::string query, int limit) {
   json prefix = json::array(), contains = json::array();
   for (const Goods* g : Db().goods) {
     if (!g->isLinkable || !g->showInExplorers) continue;
-    std::string name = g->name;
-    std::transform(name.begin(), name.end(), name.begin(),
+    // Match internal AND localized names (the UI suggests localized ones).
+    std::string haystack = g->name + "\x01" + g->locName;
+    std::transform(haystack.begin(), haystack.end(), haystack.begin(),
                    [](unsigned char c) { return std::tolower(c); });
-    size_t pos = name.find(query);
+    size_t pos = haystack.find(query);
     if (pos == std::string::npos) continue;
-    (pos == 0 ? prefix : contains).push_back(GoodsBrief(g));
+    bool atStart = pos == 0 || haystack[pos - 1] == '\x01';
+    (atStart ? prefix : contains).push_back(GoodsBrief(g));
     if (prefix.size() >= static_cast<size_t>(limit)) break;
   }
   for (json& e : contains) {

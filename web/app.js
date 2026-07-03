@@ -1066,6 +1066,11 @@ function renderMilestonesSummary() {
   const reached = milestones.filter((m) => m.unlocked).length;
   $('#milestonesSummary').textContent =
       milestones.length ? `${reached}/${milestones.length} reached` : '';
+  // The search hint tracks milestone progression: the next pack you haven't
+  // reached is what you're probably hunting recipes for.
+  const next = milestones.find((m) => !m.unlocked) ?? milestones.at(-1);
+  $('#search').placeholder = next
+      ? `Search goods — try ${next.locName}` : 'Search goods…';
 }
 
 async function renderMilestoneGrid() {
@@ -1250,6 +1255,7 @@ $('#switchBtn').onclick = () => {
   }
   $('#search').disabled = true;
   $('#search').value = '';
+  $('#search').placeholder = 'Search goods…';
   $('#results').innerHTML = '';
   $('#recipeInfo').innerHTML = '';
   $('#techResults').innerHTML = '';
