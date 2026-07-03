@@ -8,6 +8,7 @@ add_library(yafc_core
   yafc/model/data_classes.cc
   yafc/model/database.cc
   yafc/model/production_table.cc
+  yafc/model/recipe_parameters.cc
   yafc/parser/data_deserializer.cc
   yafc/parser/data_deserializer_entity.cc
   yafc/parser/data_deserializer_recipes.cc

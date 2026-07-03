@@ -116,10 +116,10 @@ TEST_CASE("fixed buildings pin rate via recipeTime; built-count warnings") {
   root.AddLink({g.ore, nullptr});
   root.AddLink({g.plate, nullptr}, 0)->algorithm = LinkAlgorithm::AllowOverProduction;
 
+  g.smelt->time = 4;  // parameters are computed from the recipe now
   RecipeRow* mineRow = root.AddRecipe(g.mine);
   RecipeRow* smeltRow = root.AddRecipe(g.smelt);
   smeltRow->fixedBuildings = 2;
-  smeltRow->parameters.recipeTime = 4;
 
   REQUIRE(root.Solve() == TableSolveResult::Ok);
   CHECK(smeltRow->recipesPerSecond == doctest::Approx(0.5));
@@ -137,6 +137,54 @@ TEST_CASE("fixed buildings pin rate via recipeTime; built-count warnings") {
   smeltRow->parameters.warningFlags = 0;
   REQUIRE(root.Solve() == TableSolveResult::Ok);
   CHECK(!root.builtCountExceeded);
+}
+
+TEST_CASE("crafter speed, power and fuel drive recipe parameters") {
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Item* plate = Add<Item>(objects, "plate");
+  Special* power = Add<Special>(objects, "electricity");
+  power->power = true;
+  power->fuelValue = 1;
+  Recipe* smelt = Add<Recipe>(objects, "smelt");
+  smelt->time = 4;
+  smelt->ingredients.emplace_back(ore, 1.0f);
+  smelt->products.emplace_back(plate, 1.0f);
+  auto* furnace = Add<EntityCrafter>(objects, "furnace");
+  furnace->baseCraftingSpeed = 2;
+  furnace->basePower = 0.18f;  // MW
+  furnace->hasEnergy = true;
+  furnace->energy.fuels.push_back(power);
+  Database db;
+  db.LoadBuiltData(std::move(objects));
+
+  ProductionTable root;
+  root.AddLink({ore, nullptr});
+  root.AddLink({plate, nullptr}, 10);
+  root.AddLink({power, nullptr});
+  RecipeRow* row = root.AddRecipe(smelt);
+  row->entity = {furnace, nullptr};
+  row->fuel = {power, nullptr};
+
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  CHECK(row->parameters.recipeTime == doctest::Approx(2.0f));  // 4s / speed 2
+  CHECK(row->recipesPerSecond == doctest::Approx(10));
+  CHECK(row->buildingCount() == doctest::Approx(20.0f));
+  // Electric "fuel": usage per building == power draw (fuelValue 1, eff 1).
+  CHECK(row->parameters.fuelUsagePerSecondPerBuilding == doctest::Approx(0.18f));
+  CHECK(row->parameters.fuelUsagePerSecondPerRecipe() == doctest::Approx(0.36f));
+  CHECK((row->parameters.warningFlags & WarningFlags::kFuelNotSpecified) == 0);
+  CHECK((row->parameters.warningFlags & WarningFlags::kEntityNotSpecified) == 0);
+
+  // Power flow: 20 buildings x 0.18 MW = 3.6 MW consumed.
+  bool foundPower = false;
+  for (const ProductionTableFlow& f : root.flow) {
+    if (f.goods.target == power) {
+      foundPower = true;
+      CHECK(f.amount == doctest::Approx(-3.6));
+    }
+  }
+  CHECK(foundPower);
 }
 
 TEST_CASE("disabled rows are excluded from the solve") {

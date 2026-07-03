@@ -170,7 +170,15 @@ static std::string tableAddRecipe(std::string tdn, double fixedCraftsPerSecond) 
   if (r == nullptr) return Err("unknown recipe " + tdn);
   RecipeRow* row = g_table->AddRecipe(r);
   if (fixedCraftsPerSecond > 0) {
-    row->fixedBuildings = static_cast<float>(fixedCraftsPerSecond);
+    row->fixedRate = static_cast<float>(fixedCraftsPerSecond);
+  }
+  // Default selections, like desktop does at row creation: the first crafter
+  // (data order; entity picker UI later) and its first fuel.
+  if (!r->crafters.empty()) {
+    row->entity = {r->crafters[0], Db().qualityNormal};
+    if (r->crafters[0]->hasEnergy && !r->crafters[0]->energy.fuels.empty()) {
+      row->fuel = {r->crafters[0]->energy.fuels[0], nullptr};
+    }
   }
   return json{{"ok", true}, {"recipe", RecipeBrief(r)}}.dump();
 }
@@ -190,8 +198,20 @@ static std::string tableSolve() {
       flows.push_back(json{{"tdn", i.goods->typeDotName()},
                            {"perMin", -i.amount * row->recipesPerSecond}});
     }
+    json entity;
+    if (row->entity.target != nullptr) {
+      float perBuildingMW = row->entity.quality != nullptr
+                                ? row->entity.target->Power(*row->entity.quality)
+                                : row->entity.target->basePower;
+      perBuildingMW *= row->parameters.activeEffects.energyUsageMod();
+      entity = json{{"tdn", row->entity.target->typeDotName()},
+                    {"locName", row->entity.target->locName},
+                    {"powerMw", perBuildingMW}};
+    }
     rows.push_back(json{{"recipe", RecipeBrief(row->recipe)},
                         {"craftsPerMin", row->recipesPerSecond},
+                        {"buildings", row->buildingCount()},
+                        {"entity", std::move(entity)},
                         {"warnings", row->parameters.warningFlags},
                         {"flows", std::move(flows)}});
   }

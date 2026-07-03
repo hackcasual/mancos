@@ -188,11 +188,20 @@ async function rebuildAndSolve() {
 
 const cost = (c) => c > 0 ? `<span class="muted mono">\u00a4${c >= 100 ? c.toFixed(0) : c.toFixed(1)}</span>` : '';
 
+const WARN_ALARM = (1 << 16) | (1 << 17) | (1 << 18);  // solver warnings -> orange plate
 function warningText(bits) {
   const parts = [];
   if (bits & (1 << 16)) parts.push('Deadlock: this loop needs an external source to start');
   if (bits & (1 << 17)) parts.push('Overproduction required: a linked byproduct cannot be fully consumed');
   if (bits & (1 << 18)) parts.push('Needs more buildings than built');
+  if (bits & (1 << 2)) parts.push('Fuel consumption limited: craft time stretched to match fuel input cap');
+  if (bits & (1 << 6)) parts.push('Productivity capped at this recipe\'s maximum');
+  if (bits & (1 << 8)) parts.push('No crafter selected — using raw recipe time');
+  if (bits & (1 << 9)) parts.push('No fuel selected — energy shown as raw power draw');
+  if (bits & (1 << 10)) parts.push('Fuel temperature exceeds the maximum this building can use');
+  if (bits & (1 << 11)) parts.push('Selected fuel provides no energy to this building');
+  if (bits & (1 << 12)) parts.push('Temperature-based fuel is not linked, energy unknown');
+  if (bits & (1 << 0)) parts.push('Assumes Nauvis day/night solar ratio');
   return parts.join(' · ') || 'solver warning';
 }
 
@@ -237,9 +246,14 @@ async function renderSolve(result) {
         `<button class="flow chip ${f.perMin >= 0 ? 'pos' : 'neg'}" data-goods="${f.tdn}"` +
         ` title="${esc(f.tdn)}">${await iconImg(f.tdn)}` +
         `${fmt(f.perMin * 60)}</button>`))).join('');
-    return `<div class="plate${row.warnings ? ' warn' : ''}">
+    const entity = row.entity && row.entity.tdn ? `<span class="entity" title="${esc(row.entity.locName)}">` +
+        `${await iconImg(row.entity.tdn)}<span class="amt">×${fmt(row.buildings)}</span>` +
+        `${row.entity.powerMw > 0 ? `<span class="muted amt">${fmt(row.entity.powerMw * row.buildings * 1000)}kW</span>` : ''}` +
+        `</span>` : '';
+    return `<div class="plate${row.warnings & WARN_ALARM ? ' warn' : ''}">
       <div class="head">${await iconImg(row.recipe.tdn)}
         <span class="name" title="${esc(row.recipe.tdn)}">${esc(row.recipe.locName)}</span>
+        ${entity}
         ${row.warnings ? `<span title="${esc(warningText(row.warnings))}">⚠</span>` : ''}
         <button class="crafts${rows[i]?.fixed ? ' pinned' : ''}" data-pin="${i}"
           title="${rows[i]?.fixed ? 'Rate pinned — click to change/unpin' : 'Click to pin this rate'}">

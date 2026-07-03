@@ -150,8 +150,16 @@ Recipe + status: `solver-wasm/README.md`.
    pthreads land. [x] Hierarchical model ported 2026-07-03 (`production_table.*`):
    ProductionTable/RecipeRow/ProductionLink with nested subgroups, linkRoot resolution,
    Setup/flatten into the solve core, CalculateFlow rollup with ChildNotMatched,
-   CheckBuiltCountExceeded; RecipeParameters is a data seam (CalculateParameters —
-   crafting speed/modules/beacons/fuel — is Phase 3/4 work, needs parsed entities).
+   CheckBuiltCountExceeded. [x] RecipeParameters ported 2026-07-03
+   (`recipe_parameters.*`, upstream CalculateParameters): crafting speed + quality,
+   fuel energy incl. FluidHeat temperature math and generator inversion
+   (ScaleProductionWithPower), productivity sources (mining/research/per-tech levels/
+   reactor neighbor bonus), maximumProductivity cap, speed/energy-usage mods, drain,
+   fuel-consumption-limit throttling; Setup() recomputes parameters per row from
+   ProductionTable::settings. Rows get a default crafter (first) + fuel (first) at
+   web add; tableSolve emits entity tdn/locName, building count and per-building MW;
+   nameplates render "crafter ×N · kW". Not yet: GetModulesInfo (modules/beacons),
+   UselessQuality warning.
    [x] TechnologyScienceAnalysis ported 2026-07-03.
 3. Serialization: [x] foundation ported 2026-07-03 (`serialization/serialization.*`,
    nlohmann/json): single Visit* property declaration per class walked by JSON writer,
@@ -231,8 +239,8 @@ Recipe + status: `solver-wasm/README.md`.
    sort available-first-then-cost (directive) with cost badges; Research tab
    (searchTechs/setResearch APIs, transitive prerequisite closure, per-bundle persisted,
    optional researched-only filter gating candidate availability with lock badges).
-   Next: TS types, multi-language catalogs, .yafc project import/export, RecipeParameters
-   for building counts.
+   Next: TS types, multi-language catalogs (done), .yafc project import/export (done),
+   RecipeParameters for building counts (done 2026-07-03); modules/beacons UI next.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

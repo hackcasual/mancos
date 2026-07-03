@@ -66,7 +66,8 @@ void ProductionTable::GetAllRecipes(std::vector<RecipeRow*>& out) const {
 }
 
 void ProductionTable::Setup(std::vector<RecipeRow*>& allRecipes,
-                            std::vector<ProductionLink*>& allLinks) {
+                            std::vector<ProductionLink*>& allLinks,
+                            const ProductionSettings& settings) {
   containsDesiredProducts = false;
   RebuildLinkMap();
   for (const auto& link : links) {
@@ -86,11 +87,10 @@ void ProductionTable::Setup(std::vector<RecipeRow*>& allRecipes,
       row->hierarchyEnabled = false;
       continue;
     }
-    // Upstream: recipe.parameters = RecipeParameters.CalculateParameters(recipe)
-    // — not ported yet; parameters is caller-supplied data (see header).
+    row->parameters = RecipeParameters::Calculate(*row, settings);
     row->hierarchyEnabled = true;
     if (row->subgroup != nullptr && row != owner) {
-      row->subgroup->Setup(allRecipes, allLinks);
+      row->subgroup->Setup(allRecipes, allLinks, settings);
     } else if (row->recipe != nullptr) {
       allRecipes.push_back(row);
     }
@@ -101,7 +101,7 @@ void ProductionTable::Setup(std::vector<RecipeRow*>& allRecipes,
 TableSolveResult ProductionTable::Solve() {
   std::vector<RecipeRow*> allRows;
   std::vector<ProductionLink*> allLinks;
-  Setup(allRows, allLinks);
+  Setup(allRows, allLinks, settings);
 
   std::unordered_map<const ProductionLink*, int> linkIndex;
   for (size_t i = 0; i < allLinks.size(); ++i) {
@@ -130,11 +130,13 @@ TableSolveResult ProductionTable::Solve() {
     SolverRecipe& sr = solverRecipes[i];
     sr.name = row->recipe->name;
     sr.base_cost = row->baseCost;
-    if (row->fixedBuildings > 0) {
+    if (row->fixedRate > 0) {
+      sr.fixed_rps = row->fixedRate;  // direct crafts/second pin (web)
+    } else if (row->fixedBuildings > 0 && row->parameters.recipeTime > 0) {
       sr.fixed_rps = row->fixedBuildings / row->parameters.recipeTime;
     }
     for (const Product& product : row->recipe->products) {
-      double amount = product.GetAmountPerRecipe(row->parameters.productivity);
+      double amount = product.GetAmountPerRecipe(row->parameters.productivity());
       if (amount <= 0) continue;
       sr.products.push_back({resolve(row, product.goods), amount});
     }
@@ -145,7 +147,7 @@ TableSolveResult ProductionTable::Solve() {
       ProductionLink* link = nullptr;
       row->FindLink(row->fuel, &link);
       sr.ingredients.push_back({link != nullptr ? linkIndex[link] : -1,
-                                row->parameters.fuelUsagePerSecondPerRecipe});
+                                row->parameters.fuelUsagePerSecondPerRecipe()});
     }
   }
 
@@ -173,7 +175,7 @@ void AddFlow(const RecipeRow& row,
              std::map<std::pair<Goods*, Quality*>, std::pair<double, double>>& summer) {
   for (const Product& product : row.recipe->products) {
     auto& [prod, cons] = summer[{product.goods, nullptr}];
-    prod += product.GetAmountPerRecipe(row.parameters.productivity) * row.recipesPerSecond;
+    prod += product.GetAmountPerRecipe(row.parameters.productivity()) * row.recipesPerSecond;
   }
   for (const Ingredient& ingredient : row.recipe->ingredients) {
     auto& [prod, cons] = summer[{ingredient.goods, nullptr}];
@@ -181,7 +183,7 @@ void AddFlow(const RecipeRow& row,
   }
   if (row.fuel) {
     auto& [prod, cons] = summer[{row.fuel.target, row.fuel.quality}];
-    cons += row.parameters.fuelUsagePerSecondPerRecipe * row.recipesPerSecond;
+    cons += row.parameters.fuelUsagePerSecondPerRecipe() * row.recipesPerSecond;
   }
 }
 

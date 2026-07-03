@@ -19,19 +19,12 @@
 
 #include "yafc/model/data_classes.h"
 #include "yafc/model/production_table_solver.h"
+#include "yafc/model/recipe_parameters.h"
 
 namespace yafc {
 
 class ProductionTable;
 class RecipeRow;
-
-// Seam for the not-yet-ported RecipeParameters.CalculateParameters.
-struct RecipeParameters {
-  float recipeTime = 1.0f;
-  float fuelUsagePerSecondPerRecipe = 0.0f;
-  float productivity = 0.0f;
-  uint32_t warningFlags = 0;  // RecipeWarningFlags
-};
 
 struct QualityGoods {
   Goods* target = nullptr;
@@ -75,7 +68,9 @@ class RecipeRow {
   bool enabled = true;
   bool hierarchyEnabled = false;  // set by Setup
   float fixedBuildings = 0;       // >0 pins the rate at fixedBuildings/recipeTime
+  float fixedRate = 0;            // >0 pins crafts/second directly (web pinning)
   std::optional<float> builtBuildings;
+  ObjectWithQuality<EntityCrafter> entity;  // chosen crafter (null = unspecified)
   double baseCost = 1.0;  // upstream: recipe.RecipeBaseCost() from CostAnalysis
   QualityGoods fuel;      // optional; consumes fuelUsagePerSecondPerRecipe per craft
   RecipeParameters parameters;
@@ -114,12 +109,17 @@ class ProductionTable {
   // Depth-first recipe listing (upstream GetAllRecipes).
   void GetAllRecipes(std::vector<RecipeRow*>& out) const;
 
+  // Parameter context (mining/research productivity, tech levels); read from
+  // the ROOT table during Setup for every row in the tree.
+  ProductionSettings settings;
+
   // Flatten + solve + write back + CalculateFlow + built-count check.
   // Call on the root table.
   TableSolveResult Solve();
 
  private:
-  void Setup(std::vector<RecipeRow*>& allRecipes, std::vector<ProductionLink*>& allLinks);
+  void Setup(std::vector<RecipeRow*>& allRecipes, std::vector<ProductionLink*>& allLinks,
+             const ProductionSettings& settings);
   void CalculateFlow(RecipeRow* include);
   bool CheckBuiltCountExceeded();
 
