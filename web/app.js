@@ -33,6 +33,11 @@ function rpc(method, ...args) {
 }
 
 const $ = (sel) => document.querySelector(sel);
+// The beta channel is served under /beta/ from the beta branch.
+if (location.pathname.includes('/beta')) {
+  document.querySelector('h1')?.insertAdjacentHTML('beforeend',
+      ' <span style="font-size:10px;color:var(--signal-amber);letter-spacing:.2em">BETA</span>');
+}
 const status = (text) => { $('#status').textContent = text; };
 const esc = (s) => s.replace(/[&<>"]/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

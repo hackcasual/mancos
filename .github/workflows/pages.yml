@@ -1,7 +1,7 @@
 name: pages
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
   workflow_dispatch:
 
 permissions:
@@ -13,12 +13,19 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# One Pages site serves both channels: main builds to the site root, beta to
+# /beta/. A push to either branch rebuilds the composite site, so each
+# channel always reflects its branch tip. Promotion = fast-forwarding main to
+# beta (scripts/promote-beta.sh).
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
       # Same cache as ci.yml: or-tools + emsdk + lua are ~40 min cold.
       - name: Cache third_party
@@ -31,14 +38,32 @@ jobs:
         run: ./scripts/bootstrap.sh
 
       # No game data on CI, so no bundles/ are published: the site ships in
-      # bring-your-own-bundle mode (the bundler page builds one client-side
-      # from the user's own game files — the split-app licensing stance).
-      - name: Build web app
-        run: ./scripts/build-web.sh
+      # bring-your-own-bundle mode and fetches hosted packs from mancos-data.
+      - name: Build main (site root)
+        run: |
+          ./scripts/build-web.sh
+          mkdir -p site
+          cp -r web/dist/* site/
+
+      # Beta shares main's bootstrapped toolchain via symlink; if a beta ever
+      # changes the toolchain recipe itself, build it in its own workflow run
+      # instead.
+      - name: Build beta (site/beta)
+        run: |
+          git fetch origin beta || true
+          if git show-ref --verify --quiet refs/remotes/origin/beta; then
+            git worktree add "$RUNNER_TEMP/beta-src" origin/beta
+            ln -s "$PWD/third_party" "$RUNNER_TEMP/beta-src/third_party"
+            (cd "$RUNNER_TEMP/beta-src" && ./scripts/build-web.sh)
+            mkdir -p site/beta
+            cp -r "$RUNNER_TEMP/beta-src/web/dist/"* site/beta/
+          else
+            echo "no beta branch yet — publishing the root channel only"
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: web/dist
+          path: site
 
   deploy:
     needs: build

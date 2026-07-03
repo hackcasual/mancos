@@ -32,6 +32,14 @@ Everything runs in the browser; the solver runs in a Web Worker.
 python3 -m http.server -d web/dist 8080
 ```
 
+## Release channels
+
+`main` deploys to the site root; the `beta` branch deploys to `/beta/` on
+the same Pages site (a push to either branch rebuilds both). Land work on
+`beta`, try it at `…/mancos/beta/`, then promote with
+`scripts/promote-beta.sh` — a fast-forward of `main` to the beta tip that
+refuses if the branches have diverged.
+
 ## License
 
 - [GNU GPL 3.0](/LICENSE), same as the YAFC it is ported from.
