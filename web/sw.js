@@ -11,7 +11,8 @@ const SHELL = [
   './mancos_web.js', './mancos_web.wasm',
   './bundler.html', './bundler.js', './bundler-worker.js',
   './mancos_bundler_web.js', './mancos_bundler_web.wasm',
-  './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
+  './manifest.webmanifest', './icons/icon-32.png', './icons/icon-192.png',
+  './icons/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
