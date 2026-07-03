@@ -399,7 +399,9 @@ $('#shareBtn').onclick = async () => {
   persist();
   const text = await rpc('projectSaveRaw', JSON.stringify(pages));
   const encoded = await deflateBase64Url(text);
-  const url = `${location.origin}${location.pathname}?p=${encoded}`;
+  // Fragment, not query: never sent to the server, so no URL-length limits
+  // (or log leakage) apply; the link doubles as a bookmark of the table.
+  const url = `${location.origin}${location.pathname}#p=${encoded}`;
   try {
     await navigator.clipboard.writeText(url);
     status(`share link copied (${url.length} chars)`);
@@ -439,8 +441,14 @@ $('#projectFile').onchange = (e) => {
   reader.readAsText(file);
 };
 
+function sharedPayloadFromUrl() {
+  if (location.hash.startsWith('#p=')) return location.hash.slice(3);
+  // Legacy links used ?p= before the move to fragments.
+  return new URLSearchParams(location.search).get('p');
+}
+
 async function loadProjectFromUrl() {
-  const encoded = new URLSearchParams(location.search).get('p');
+  const encoded = sharedPayloadFromUrl();
   if (!encoded) return false;
   try {
     await importProjectText(await inflateBase64Url(encoded));
@@ -451,6 +459,12 @@ async function loadProjectFromUrl() {
     return false;
   }
 }
+
+// Fragment-only navigation does not reload the page: pasting a different
+// share link into an open tab must still load that project.
+window.addEventListener('hashchange', () => {
+  if (bundleKey && location.hash.startsWith('#p=')) loadProjectFromUrl();
+});
 
 // ---- language: browser auto-detection + selector ----
 function pickLanguage(available) {
