@@ -10,6 +10,7 @@ add_library(yafc_core
   yafc/model/production_table.cc
   yafc/parser/factorio_data_source.cc
   yafc/parser/lua_context.cc
+  yafc/parser/zip_archive.cc
   yafc/serialization/serialization.cc
   yafc/model/production_table_solver.cc
   yafc/solver/lp.cc
@@ -17,6 +18,6 @@ add_library(yafc_core
 )
 target_include_directories(yafc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(yafc_core
-  PRIVATE ortools::glop lua::lua
+  PRIVATE ortools::glop lua::lua miniz
   PUBLIC nlohmann_json::nlohmann_json
 )

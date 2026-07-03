@@ -57,14 +57,43 @@ std::string Version::ToString3() const {
   return ToString2() + "." + std::to_string(patch);
 }
 
+namespace {
+std::unique_ptr<ModInfo> ParseInfoJson(const std::string& json);
+}  // namespace
+
 std::unique_ptr<ModInfo> ModInfo::FromFolder(const std::string& folder) {
-  std::string json = ReadFile(folder + "/info.json");
+  auto info = ParseInfoJson(ReadFile(folder + "/info.json"));
+  if (info != nullptr) info->folder = folder;
+  return info;
+}
+
+std::unique_ptr<ModInfo> ModInfo::FromZip(const std::string& zipPath) {
+  std::shared_ptr<ZipArchive> archive = ZipArchive::Open(zipPath);
+  if (archive == nullptr) return nullptr;
+  // Upstream: the info.json exactly one directory deep marks the mod root.
+  for (const std::string& entry : archive->EntryNames()) {
+    constexpr std::string_view kInfo = "info.json";
+    if (entry.size() > kInfo.size() &&
+        entry.compare(entry.size() - kInfo.size(), kInfo.size(), kInfo) == 0 &&
+        entry.find('/') == entry.size() - kInfo.size() - 1) {
+      auto info = ParseInfoJson(archive->Read(entry).value_or(""));
+      if (info != nullptr) {
+        info->folder = entry.substr(0, entry.size() - kInfo.size());
+        info->zip = std::move(archive);
+      }
+      return info;
+    }
+  }
+  return nullptr;
+}
+
+namespace {
+std::unique_ptr<ModInfo> ParseInfoJson(const std::string& json) {
   if (json.empty()) return nullptr;
   nlohmann::json parsed = nlohmann::json::parse(json, nullptr, false);
   if (parsed.is_discarded() || !parsed.is_object()) return nullptr;
 
   auto info = std::make_unique<ModInfo>();
-  info->folder = folder;
   info->name = parsed.value("name", "");
   info->parsedVersion = Version::Parse(parsed.value("version", ""));
   info->parsedFactorioVersion =
@@ -79,6 +108,7 @@ std::unique_ptr<ModInfo> ModInfo::FromFolder(const std::string& folder) {
   }
   return info;
 }
+}  // namespace
 
 void ModInfo::ParseDependencies() {
   // Upstream: ^\(?([?!~+]?)\)?\s*([\w- ]+?)(?:\s*[><=]+\s*[\d.]*)?\s*$
@@ -179,12 +209,18 @@ std::pair<std::string, std::string> ModSet::ResolveModPath(
 bool ModSet::ModPathExists(const std::string& mod, const std::string& path) const {
   auto it = mods.find(mod);
   if (it == mods.end()) return false;
+  if (it->second->zip != nullptr) {
+    return it->second->zip->Exists(it->second->folder + path);
+  }
   return fs::exists(fs::path(it->second->folder) / path);
 }
 
 std::string ModSet::ReadModFile(const std::string& mod, const std::string& path) const {
   auto it = mods.find(mod);
   if (it == mods.end()) return {};
+  if (it->second->zip != nullptr) {
+    return it->second->zip->Read(it->second->folder + path).value_or("");
+  }
   return ReadFile((fs::path(it->second->folder) / path).string());
 }
 
@@ -193,6 +229,15 @@ std::vector<std::string> ModSet::GetAllModFiles(const std::string& mod,
   std::vector<std::string> result;
   auto it = mods.find(mod);
   if (it == mods.end()) return result;
+  if (it->second->zip != nullptr) {
+    std::string full = it->second->folder + prefix;
+    for (const std::string& entry : it->second->zip->EntryNames()) {
+      if (entry.rfind(full, 0) == 0) {
+        result.push_back(entry.substr(it->second->folder.size()));
+      }
+    }
+    return result;
+  }
   fs::path base = fs::path(it->second->folder);
   fs::path dir = base / prefix;
   if (!fs::exists(dir)) return result;
@@ -210,9 +255,18 @@ void FactorioDataSource::FindMods(const std::string& directory,
                                   std::vector<std::unique_ptr<ModInfo>>& out) {
   if (!fs::exists(directory)) return;
   for (const auto& entry : fs::directory_iterator(directory)) {
-    if (!entry.is_directory()) continue;  // TODO(port): zipped mods (minizip)
-    auto info = ModInfo::FromFolder(entry.path().string());
-    if (info != nullptr) out.push_back(std::move(info));
+    if (entry.is_directory()) {
+      auto info = ModInfo::FromFolder(entry.path().string());
+      if (info != nullptr) out.push_back(std::move(info));
+    } else if (entry.is_regular_file()) {
+      std::string ext = entry.path().extension().string();
+      std::transform(ext.begin(), ext.end(), ext.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (ext == ".zip") {
+        auto info = ModInfo::FromZip(entry.path().string());
+        if (info != nullptr) out.push_back(std::move(info));
+      }
+    }
   }
 }
 

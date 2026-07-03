@@ -16,12 +16,13 @@ add_executable(yafc_tests
   production_table_test.cc
   tech_science_test.cc
   serialization_test.cc
+  zip_mod_test.cc
   graph_test.cc
   production_table_solver_test.cc
   solver_test.cc
   lua_test.cc
 )
-target_link_libraries(yafc_tests PRIVATE yafc_core doctest::doctest)
+target_link_libraries(yafc_tests PRIVATE yafc_core doctest::doctest miniz)
 
 if(EMSCRIPTEN)
   # NODERAWFS: tests run under node and read the real filesystem (game data

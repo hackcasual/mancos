@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "yafc/parser/lua_context.h"
+#include "yafc/parser/zip_archive.h"
 
 namespace yafc {
 
@@ -29,9 +30,13 @@ struct Version {
 class ModInfo {
  public:
   static std::unique_ptr<ModInfo> FromFolder(const std::string& folder);
+  // Finds the depth-1 info.json inside the archive (upstream semantics);
+  // folder becomes the internal prefix incl. trailing slash.
+  static std::unique_ptr<ModInfo> FromZip(const std::string& zipPath);
 
   std::string name;
-  std::string folder;
+  std::string folder;                 // fs path, or zip-internal prefix ending in '/'
+  std::shared_ptr<ZipArchive> zip;    // null for folder mods
   Version parsedVersion;
   Version parsedFactorioVersion{1, 1, 0};
   std::vector<std::string> dependencies;  // raw strings from info.json

@@ -22,6 +22,15 @@ FetchContent_Declare(
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(nlohmann_json)
+
+# Zip access for zipped mods (miniz: single-file, MIT, wasm-friendly).
+FetchContent_Declare(
+  miniz
+  URL https://github.com/richgel999/miniz/archive/refs/tags/3.0.2.tar.gz
+  URL_HASH SHA256=c4b4c25a4eb81883448ff8924e6dba95c800094a198dc9ce66a292ac2ef8e018
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(miniz)
 # Patched Lua 5.2.1 (Factorio-compatible; fetched by scripts/bootstrap.sh)
 include(cmake/lua.cmake)
 
