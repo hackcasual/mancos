@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- New project icon (the alpaca): favicon on both pages and the PWA/install
+  icons.
+
 - App mode (PWA): installable with offline support — the app shell (HTML/JS/
   wasm) precaches under a per-build service-worker cache, and pack bundles/
   manifests use stale-while-revalidate, so previously loaded packs plan fully
