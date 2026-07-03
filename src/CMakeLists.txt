@@ -15,6 +15,7 @@ add_library(yafc_core
   yafc/parser/lua_context.cc
   yafc/parser/property_tree.cc
   yafc/parser/zip_archive.cc
+  yafc/serialization/database_dump.cc
   yafc/serialization/serialization.cc
   yafc/model/production_table_solver.cc
   yafc/solver/lp.cc

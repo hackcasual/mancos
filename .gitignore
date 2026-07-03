@@ -11,3 +11,6 @@ data/
 build/
 *.wasm
 solver-wasm/demo/out/
+
+# web app build output
+web/dist/

@@ -274,6 +274,7 @@ class Product {
   bool IsSimple() const;
 
  private:
+  friend struct DatabaseDumpAccess;  // bundle (de)serialization
   float productivityAmount_ = 0;
 };
 

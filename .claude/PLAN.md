@@ -191,10 +191,14 @@ Recipe + status: `solver-wasm/README.md`.
 
 ## Phase 4 — Web-native UI (decision 2026-07-02: no SDL port)
 
-1. Define the wasm-core API boundary (embind or C ABI + small TS glue): project
-   open/save, table & link CRUD, solve, database queries (goods/recipes/icons), undo.
-   Core emits typed warning/error codes + structured results; all presentation and i18n
-   live in the web layer.
+1. [x] Milestone 1 shipped 2026-07-03: wasm-core API boundary (`src/web/web_api.cc`,
+   embind, JSON results; bundle bytes via wasm memory) running in a dedicated Web Worker
+   (`web/worker.js`, per the threading directive), with a vanilla-JS planner page
+   (`web/index.html`/`app.js`): load bundle, search goods, producer browsing, demand
+   goals, link/row management, solve, flows incl. imports/surplus, first-layer icons via
+   blob URLs. `scripts/build-web.sh` -> web/dist (2.3 MB incl. wasm). Headless node smoke
+   drives the golden lead table through the public API. Next: TS types, icon layer
+   compositing, row editing/removal, project save/load via the serialization layer.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.
@@ -215,6 +219,11 @@ Recipe + status: `solver-wasm/README.md`.
      skipped — bundles carry translation catalogs for the web i18n layer.
    - Bundle = {database dump, icons.json manifest + deduped PNG blobs (Phase 3.3 extractor),
      locale catalogs, modpack metadata incl. mod versions for cache keys}.
+   - [x] Bundler CLI + bundle format shipped 2026-07-03: `yafc_bundler` (native)
+     parses+deserializes+extracts and writes the bundle zip (meta.json, database.cbor
+     14.6 MB for the py corpus, icons.json + 4,899 PNGs 33.7 MB); `ReadBundle[FromMemory]`
+     loads it with zero game-file access; the golden lead-plate test passes identically
+     on a bundle-roundtripped Database. Locale catalogs still TODO (needs the .cfg parser).
    - **Split-app architecture (directive 2026-07-03): the product is TWO apps.**
      (a) The *bundler*: has filesystem access (native CLI for CI, and/or a browser page
      using the File System Access API running the same wasm core) — points at the user's

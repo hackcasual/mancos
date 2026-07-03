@@ -36,6 +36,26 @@ include(cmake/lua.cmake)
 
 add_subdirectory(src)
 
+# The bundler CLI: filesystem-facing half of the split app (native only; the
+# browser bundler page will reuse the same core through the wasm build).
+if(NOT EMSCRIPTEN)
+  add_executable(yafc_bundler src/tools/bundler_main.cc)
+  target_link_libraries(yafc_bundler PRIVATE yafc_core)
+endif()
+
+# The web module: the wasm core of the main app (built by scripts/build-web.sh).
+option(YAFC_WEB "Build the web (embind) module" OFF)
+if(EMSCRIPTEN AND YAFC_WEB)
+  add_executable(yafc_web src/web/web_api.cc)
+  target_link_libraries(yafc_web PRIVATE yafc_core)
+  target_link_options(yafc_web PRIVATE
+    --bind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createYafcModule
+    -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=2097152
+    -sEXPORTED_FUNCTIONS=_malloc,_free
+    -sEXPORTED_RUNTIME_METHODS=HEAPU8
+    -sENVIRONMENT=web,worker,node)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
   add_subdirectory(tests)
