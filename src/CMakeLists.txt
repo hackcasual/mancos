@@ -8,6 +8,8 @@ add_library(yafc_core
   yafc/model/data_classes.cc
   yafc/model/database.cc
   yafc/model/production_table.cc
+  yafc/parser/factorio_data_source.cc
+  yafc/parser/lua_context.cc
   yafc/serialization/serialization.cc
   yafc/model/production_table_solver.cc
   yafc/solver/lp.cc

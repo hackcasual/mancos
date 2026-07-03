@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(doctest)
 add_executable(yafc_tests
   test_main.cc
   cost_analysis_test.cc
+  data_stage_test.cc
   database_test.cc
   milestones_test.cc
   production_table_test.cc
@@ -23,8 +24,10 @@ add_executable(yafc_tests
 target_link_libraries(yafc_tests PRIVATE yafc_core doctest::doctest)
 
 if(EMSCRIPTEN)
+  # NODERAWFS: tests run under node and read the real filesystem (game data
+  # for the data-stage tracer). Browser builds use OPFS/worker FS instead.
   target_link_options(yafc_tests PRIVATE
-    -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576)
+    -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576 -sNODERAWFS=1)
 endif()
 
 # Under emscripten, CMAKE_CROSSCOMPILING_EMULATOR (node) runs the .js output.

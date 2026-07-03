@@ -155,9 +155,19 @@ Recipe + status: `solver-wasm/README.md`.
 
 ## Phase 3 — Port Yafc.Parser (data pipeline in the browser)
 
-1. Lua data stage: LuaContext (require resolution across mods, `defines` table, feature
-   flags, settings stage) against patched Lua 5.2.1 built with emcc. Direct C API — simpler
-   than upstream's P/Invoke.
+1. Lua data stage: [x] ported 2026-07-03 (`src/yafc/parser/lua_context.*`,
+   `factorio_data_source.*`): LuaContext on the direct C API (sandbox + version-selected
+   defines, mod-aware require with the traceback-based caller detection, chunk-name
+   rewriting, helpers.compare_versions/evaluate_expression (tiny recursive-descent parser
+   replaces Roslyn), yafc.parse_energy), mod discovery from folders, version selection,
+   dependency parse/check, core-first alphabetical-batch load order, data.lua ×3 +
+   Postprocess. TRACER GREEN: the full vanilla+Space Age data stage runs from
+   data/factorio/data on native AND as wasm under node (-sNODERAWFS in tests), data.raw
+   verified. Environment lua files load from third_party/yafc-ce/Yafc/Data (vendoring +
+   GPL-3.0 licensing decision pending). Deviations: feature_flags follow the game (mod
+   presence) instead of upstream's always-false TODO; mod-fix hooks and locale files not
+   ported (web i18n). Next: zipped mods (minizip), mod-settings.dat property tree,
+   FactorioDataDeserializer (data.raw → Database).
 2. Mod handling: mod-list.json, dependency sort, versioned zips (libzip over OPFS/MEMFS),
    mod-settings.dat (custom binary property-tree parser — straight port).
 3. Prototype → model deserialization (`Data/` subdir) and icon atlas (SDL_image decode,
