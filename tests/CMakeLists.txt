@@ -14,6 +14,7 @@ add_executable(yafc_tests
   milestones_test.cc
   production_table_test.cc
   tech_science_test.cc
+  serialization_test.cc
   graph_test.cc
   production_table_solver_test.cc
   solver_test.cc

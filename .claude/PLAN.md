@@ -127,20 +127,28 @@ Recipe + status: `solver-wasm/README.md`.
    flood-fill with per-milestone pruning walks + inaccessible-mask prediction + locked
    mask, automation queue propagation (character-only-crafter and late-machine cases),
    HooksFromAnalyses wiring into CostAnalysis. Per-milestone walks sequential until wasm
-   pthreads land. Remaining: hierarchical Setup/flatten, CalculateFlow rollup,
-   CheckBuiltCountExceeded, TechnologyScienceAnalysis.
-3. Serialization (sized 2026-07-02: upstream = 2,009 loc infra + ~20 serialized classes;
-   C++ ≈ 1.5-2.5k loc + ~1 line per property in per-class field lists; ~3-5 focused days on
-   top of the model classes; risk is compat quirks — obsolete-prop migration, unknown-prop
-   tolerance — locked down by round-trip tests on real .yafc files):
-   C# uses reflection over properties → C++ needs explicit schemas.
+   pthreads land. [x] Hierarchical model ported 2026-07-03 (`production_table.*`):
+   ProductionTable/RecipeRow/ProductionLink with nested subgroups, linkRoot resolution,
+   Setup/flatten into the solve core, CalculateFlow rollup with ChildNotMatched,
+   CheckBuiltCountExceeded; RecipeParameters is a data seam (CalculateParameters —
+   crafting speed/modules/beacons/fuel — is Phase 3/4 work, needs parsed entities).
+   [x] TechnologyScienceAnalysis ported 2026-07-03.
+3. Serialization: [x] foundation ported 2026-07-03 (`serialization/serialization.*`,
+   nlohmann/json): single Visit* property declaration per class walked by JSON writer,
+   JSON reader and undo; FactorioObject refs as typeDotName; unknown properties and
+   unresolvable refs collected, not fatal; Project/ProjectPage/ProjectSettings +
+   table/row/link subset with upstream field names. Remaining for full .yafc compat
+   (Phase 3+, as model fields land): entity/modules/beacons on RecipeRow, quality
+   suffixes on goods refs, obsolete-prop migrations, validation against real desktop
+   .yafc files — that validation is the acceptance bar.
    Approach: hand-written per-class serialize/deserialize with a tiny visitor helper so each
    class declares fields once (macro or member-list function used by JSON writer, JSON reader,
    AND the undo snapshotter — same three consumers as upstream).
    **Hard requirement: read/write upstream `.yafc` project JSON unchanged** so desktop users
    can move projects between yafc-ce and yafc-web.
-4. Undo system: upstream snapshots objects via the property serializers; same visitor
-   mechanism gives us binary snapshot/restore.
+4. Undo system: [x] snapshot-based UndoSystem 2026-07-03 (whole-project JSON snapshots,
+   bounded depth, undo/redo stacks). Upstream snapshots per-object; revisit granularity
+   if profiling demands it.
 5. Tests: port the interesting parts of `Yafc.Model.Tests`; add golden tests — run desktop
    C# yafc-ce on a fixed dataset, dump solved tables/analyses, compare C++ output within
    tolerance. This is the main defense against silent port regressions.

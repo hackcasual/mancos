@@ -8,6 +8,7 @@ add_library(yafc_core
   yafc/model/data_classes.cc
   yafc/model/database.cc
   yafc/model/production_table.cc
+  yafc/serialization/serialization.cc
   yafc/model/production_table_solver.cc
   yafc/solver/lp.cc
   yafc/lua/lua_vm.cc
