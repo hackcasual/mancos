@@ -1054,12 +1054,26 @@ $('#bundleFile').onchange = async (e) => {
 };
 
 // Server-hosted packs (human priority 3): manifest + persisted default.
+// Sources in order: same-origin bundles/ (local dev, self-hosting), then the
+// mancos-data Pages site (the published app ships no bundles of its own;
+// github.io serves with open CORS).
+const PACK_SOURCES = ['./', 'https://hackcasual.github.io/mancos-data/'];
+let packBase = './';
+
 async function initPacks() {
   let manifest = null;
-  try {
-    const response = await fetch('bundles/manifest.json');
-    if (response.ok) manifest = await response.json();
-  } catch { /* no hosted packs: file-only mode */ }
+  for (const base of PACK_SOURCES) {
+    try {
+      const response = await fetch(base + 'bundles/manifest.json');
+      if (!response.ok) continue;
+      const parsed = await response.json();
+      if (parsed?.packs?.length) {
+        manifest = parsed;
+        packBase = base;
+        break;
+      }
+    } catch { /* try the next source */ }
+  }
   if (!manifest?.packs?.length) return;
 
   const last = localStorage.getItem('mancos:lastPack');
@@ -1080,7 +1094,7 @@ async function initPacks() {
 
 async function loadPack(id, file) {
   status(`fetching ${id}…`);
-  const response = await fetch(file);
+  const response = await fetch(packBase + file);
   if (!response.ok) { status(`fetch failed: ${response.status}`); return; }
   await loadBundleBuffer(await response.arrayBuffer(), id, id);
 }
