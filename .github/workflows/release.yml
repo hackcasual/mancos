@@ -34,7 +34,11 @@ jobs:
           pkg=mancos-bundler-${GITHUB_REF_NAME:-dev}
           mkdir -p "$pkg"
           cp build/wasm/mancos_bundler_node.js build/wasm/mancos_bundler_node.wasm "$pkg/"
-          cp scripts/release/mancos-bundler.mjs "$pkg/"
+          # Stamp the launcher with the release tag so its update check can
+          # compare against GitHub releases (dev builds keep the placeholder,
+          # which disables the check).
+          sed "s/__MANCOS_BUNDLER_VERSION__/${GITHUB_REF_NAME:-dev}/" \
+            scripts/release/mancos-bundler.mjs > "$pkg/mancos-bundler.mjs"
           cp scripts/release/BUNDLER-README.md "$pkg/README.md"
           cp LICENSE licenses.txt "$pkg/"
           cp -r third_party/yafc-ce/Yafc/Data "$pkg/env"

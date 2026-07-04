@@ -23,6 +23,22 @@ Do not make changes to README.md, all text there is human authored
    existing technologyUnlock ∩ researched check.
 5. [x] (2026-07-03) Mobile phone mode — single-column layout optimized for building a table:
    catalog as a bottom sheet, large touch targets, collapsible flows/links sections.
+6. [x] (2026-07-04) Mobile-safe demand/pin entry — native prompt() doesn't reliably appear in
+   installed/standalone-mode PWAs; replaced with a shared in-page amount dialog for both
+   "Set demand" and "Pin rate".
+7. [x] (2026-07-04) Main-products separator — Goals strip splits into "Main products"
+   (output demand) and "Inputs to consume" (negative/consume goals) sections.
+8. [x] (2026-07-04) Producing at quality (Factorio 2.0) — full solver threading: see
+   Increment 12 below.
+9. [x] (2026-07-04) Individual projects + project settings — multiple named projects per
+   bundle, each with its own productivity research state (mining %, research %,
+   per-technology productivity levels — critical for quality recycling loops): see
+   Increment 13 below. Reference scenario: LDS recycling for higher-quality plastic.
+10. [x] (2026-07-04) Blueprint auto-generation (sets of buildings with recipes placed) —
+   building footprints were already in the bundle (Entity width/height from
+   selection_box, upstream-parity tile rounding, round-tripped by database_dump.cc);
+   now exposed in rowOptions crafter briefs and consumed by the exporter: see
+   Increment 14 below.
 
 Goal: port [Yafc-CE](https://github.com/Yafc-CE/yafc-ce) (Factorio production calculator,
 C#/.NET 10 + SDL2 + Google OR-Tools + Lua 5.2.1) to run entirely client-side in a browser.
@@ -258,7 +274,7 @@ Recipe + status: `solver-wasm/README.md`.
    tableAddRecipe(tdn, fixed, entityTdn, fuelTdn) — a reactor burning mox vs uranium
    cells is a different chain; user's 53-page project: every page solves.
    Not ported yet: custom milestone sets ("Edit milestones" editor), tech progression
-   settings dialog; temperature-variant fluid links (steam@250) can stay unmatched.
+   settings dialog. Temperature-variant fluid links (steam@250) fixed in Increment 11.
    Increment 5 (2026-07-03): modules & beacons + row config (directive): ModuleTemplate/
    GetModulesInfo port in recipe_parameters (slot fill with fixedCount-0 = fill-remaining,
    entity+recipe CanAcceptModule filtering, beaconList totals -> ceil(total/slots) beacons,
@@ -307,6 +323,182 @@ Recipe + status: `solver-wasm/README.md`.
    NO consumer still reports unmatched (desktop parity) — pure surpluses should stay
    unlinked. Full PUREX auto-closure needs consumer-pull (washing loops recycle
    upward), queued with the dependency-explorer work.
+   Increment 9 (2026-07-03): shared links now carry pack + milestones (user request), not
+   just the raw .yafc project text. Share envelope is `{pack, milestones, project}`
+   (pack = manifest id of the loaded bundle, null for a locally-loaded file) deflated+
+   base64url as before; `initPacks()` decodes the link's pack id before the chooser
+   renders and auto-fetches that pack instead of falling back to `mancos:lastPack`/manual
+   click, and `loadProjectFromUrl()` applies the link's milestone set via `setMilestones`
+   in place of the normal localStorage-restore-or-open-the-dialog first-load path. Legacy
+   links (raw text, no envelope) still decode fine — `parseSharedPayload` falls back to
+   treating non-JSON/no-`.project` payloads as the old format. Verified end-to-end with a
+   CDP-driven headless Chromium smoke test (no chromium-cli/puppeteer installed in this
+   sandbox — drove `~/.cache/puppeteer/chrome` directly over the DevTools Protocol via
+   node's built-in `fetch`+`WebSocket`, clicking through the real UI since app.js is an ES
+   module and its top-level bindings aren't reachable from `Runtime.evaluate`): fresh
+   profile -> load pack -> set a demand + row + milestone -> Share (clipboard) -> clear
+   storage -> open the captured link -> pack auto-loads, goal/row/milestones reappear,
+   milestones dialog does not re-prompt.
+   Increment 10 (2026-07-03): search results now sort milestone-reachable goods before
+   locked ones (user request) — `GoodsRank` (mirrors the existing `RecipeRank` tiering)
+   added to `searchGoods`; also fixed a latent truncate-then-never-sort bug in the same
+   function (it used to stop scanning the database the instant the prefix-match bucket
+   hit `limit`, so anything past that point in raw id order never got a chance regardless
+   of relevance — now it collects every match, sorts, then truncates).
+   Increment 11 (2026-07-03): fixed temperature-variant fluid links (user bug report:
+   "silver plate from soot" only matched coke-oven-gas at exactly 100°, not the 250°/500°
+   producers that should also satisfy a ">=100°" ingredient). Root cause was a porting
+   gap, not a data/parser bug: the parser's temperature bucketing (`UpdateRecipeIngredientFluids`,
+   already correct, matches upstream) always defaults `Ingredient::goods` to the coldest
+   qualifying variant and lists the rest in `Ingredient::variants`, but nothing in the
+   C++ port let a row bind to any variant OTHER than that default — upstream's
+   `RecipeRow.variants`/`GetVariant` selection mechanism was never carried over (an
+   already-noted PLAN gap). Ported: `RecipeRow::variants` (vector<Goods*>, matches
+   `Ingredient::variants`'s type so it reuses the existing ref-list JSON Prop() overload
+   for .yafc round-trip unchanged) + `RecipeRow::ResolveIngredient()` (upstream
+   GetVariant: first pinned option present in `ingredient.variants`, else the parser's
+   default), threaded into both `ProductionTable::Solve()`'s solver-ingredient resolution
+   and `AddFlow`'s consumption summation — the two places that previously read
+   `ingredient.goods` unconditionally. Web API: `tableAddRecipe` config gains a
+   `"variants": [tdn,...]` field; `RecipeBrief`'s ingredient entries gain a `"variants"`
+   list when more than one qualifying option exists (what a picker UI would enumerate);
+   `tableSolve` row flows now report the resolved variant's tdn. Verified against the
+   real Pyanodon coke-oven-gas chain (3 temperature variants, `Recipe.quench-ovengas`
+   consumer): default still resolves to @100 (unchanged behavior), pinning `variants:
+   ["Fluid.coke-oven-gas@500"]` makes the row consume @500 and a link to a @500 producer
+   now actually solves and matches (previously impossible at any pin, since there was no
+   pin). Native test suite green. Not yet done: no UI variant-picker in app.js (the
+   mechanism is API-complete but nothing in the row-config dialog exposes it yet) and no
+   equivalent variant selection for fuel temperature (row.fuel is chosen directly from
+   entity->energy.fuels, a different mechanism, out of scope for this fix).
+   Increment 12 (2026-07-04): mobile UX fixes (user directive) + full quality (Factorio 2.0)
+   threading (user directive: "producing at quality"). Mobile: native `prompt()` doesn't
+   reliably appear in installed/standalone-mode PWAs (the likely cause of the reported
+   "can't set a demand on mobile" bug) — replaced with a shared `#amountDialog` (number
+   input + optional quality `<select>`) used by both "Set demand" and "Pin rate", with a
+   dedicated Unpin action; Goals strip splits into "Main products" / "Inputs to consume"
+   sections. Quality: previously only entity/building quality existed (`ObjectWithQuality<
+   EntityCrafter>`, always Normal from the web layer); `QualityGoods`/links were wired for
+   it but products/ingredients always resolved at `nullptr` ("no quality dimension (yet)").
+   Ported upstream's `BuildProducts` upgrade-chance math (`ProductionTableContent.cs`):
+   `RecipeRow` gains a target/floor `quality` (nullptr = unset, resolved to
+   `ProductionSettings::qualityNormal` — a new caller-injected field, since the model core
+   has no Database back-reference — by `RecipeParameters::Calculate`, so untouched callers
+   see zero behavior change). Ingredients consume at that resolved quality (forced to
+   Normal for goods that don't accept it — new `Goods::AcceptsQuality()`, Item-only, out-
+   of-line for the forward-declaration); products spread across quality tiers via
+   `Quality::UpgradeChance` compounding + the module `Quality` effect
+   (`ModuleEffects::qualityMod()`, already computed, just never consumed before), shared
+   by `Solve()` (LP inputs), `AddFlow` (flow reporting) and a new `RecipeRow::DisplayFlows()`
+   (also fixes a latent bug: the web layer's per-row nameplate flows were recomputed
+   straight from `recipe->products` and ignored productivity entirely). Milestone-gating
+   the top of the quality chain (upstream `Quality.MaxAccessible`) is NOT ported — the
+   walk uses every quality tier the loaded data defines, not just currently-reachable ones;
+   a real gap but low-impact (over-inclusive, not incorrect) and flagged for a follow-up.
+   Serialization: quality-wrapped refs (desktop `"!target!quality"`, quality by bare
+   `name` not typeDotName) for `QualityGoods`/`ObjectWithQuality<T>` in both directions;
+   `RecipeRow.recipe`'s "recipe" property is bridged through a temporary `ObjectWithQuality
+   <RecipeOrTechnology>` so upstream's actual shape (recipe+quality as one wrapped ref) is
+   preserved without changing this port's separate recipe/quality fields; an unresolvable
+   quality name degrades leniently (nullptr, i.e. Normal) rather than a load error. Web API:
+   `qualityList()` (level-ordered, milestone-gated like recipes/goods) alongside
+   `tableAddLink`'s new required qualityTdn arg, `tableAddRecipe`'s config `"quality"`,
+   `tableSolve`'s row/flow/link quality briefs, `projectSaveAll`/`projectLoad` quality
+   round-trip for goals+rows; goods that can't accept quality are clamped to Normal
+   server-side (not just client-gated) so a mismatched/dead link can't be created. UI:
+   quality `<select>` in the amount dialog (goal-only, hidden for Fluid/Special goods and
+   whenever the loaded pack has no real non-Normal tier — see below), a quality button
+   row in the row-config dialog (no favorites, unlike building/fuel), small icon badges
+   (reusing `iconImg` — Quality objects get bundler-extracted icons like any other
+   FactorioObject) on goal pills/plate names/flow chips/link pills, omitted entirely at
+   Normal to keep the common case unchanged. Off-table "produce/consume/link only" actions
+   stay Normal-only for now (the `linked` list has no quality dimension) — a non-Normal
+   surplus/import still displays (with its badge) but isn't actionable from that panel;
+   flagged as a follow-up alongside MaxAccessible gating. Discovered mid-session: Pyanodon's
+   Alien Life (the only previously-available local bundle) disables the quality feature
+   entirely at the game-data level (common for overhaul packs) — the Database then only
+   carries Normal + Factorio's internal always-inaccessible "quality-unknown" sentinel;
+   added `hasSelectableQualities()` gating so the picker/section don't appear at all in
+   that case instead of offering a dead-end option. Verified: 2 new production-table tests
+   (module-upgrade-chance spread across 3 synthetic tiers incl. `DisplayFlows` parity; a
+   fixed non-Normal floor with no modules produces 100% at that exact tier) + 1
+   serialization round-trip test, native + wasm/node suites green throughout. Built a local
+   vanilla bundle (`mancos_bundler <data> vanilla <env> out.yafcbundle`, real Uncommon/
+   Rare/Epic/Legendary tiers with correct milestone gating) since the checked-in bundle
+   has quality disabled; CDP-driven headless-Chromium pass against it: quality picker
+   renders in both dialogs, a non-Normal goal and non-Normal row-quality selection each
+   solve and show their badge, no console errors. Not yet done: MaxAccessible milestone-
+   gating of the upgrade-chance walk; quality dimension on the `linked` (off-table link-
+   only) list; fuel-quality picker (fuel defaults to Normal, unchanged from before).
+   Increment 13 (2026-07-04): individual projects + per-project settings (user directive:
+   quality recycling loops need per-project productivity research levels; "mining
+   productivity as well"; reference output: recycling LDS for higher-quality plastic).
+   FOUND AND FIXED a real quality-math bug while verifying against the hosted
+   factorio_2.1_SpaceAge_Quality bundle: **Factorio 2.1 changed the quality prototype
+   format** — module quality effects are now real fractions (0.025, was 10x-display 0.25
+   in 2.0), next_probability is 1.0 (was 0.1), and tier-to-tier chaining moved to a NEW
+   chain_probability field (0.1) on the reached tier. The 2.0-era math (multiply
+   next_probability all the way up — upstream yafc-ce's current model too) makes every
+   upgraded item chain straight to Legendary at 100% on 2.1 data. Fix: Quality gains
+   ChainProbability (parser: chain_probability, falling back to next_probability = the
+   2.0 chaining rule; dump format writes it, reader tolerates old bundles via
+   e.value() fallback), QualityDistribution multiplies UpgradeChance for the FIRST step
+   and the reached tier's ChainProbability for later steps — correct for both eras.
+   ***The hosted factorio_2.1_SpaceAge_Quality.yafcbundle (mancos-data) must be REBUILT
+   with the fixed bundler*** — it baked next_probability=1 with no chain info, so quality
+   spreads stay wrong on the old file (loads fine otherwise). Upstream yafc-ce likely has
+   the same 2.1 bug (worth an upstream report). Per-project settings: ProjectSettings
+   gains miningProductivity/researchProductivity/productivityTechnologyLevels (upstream
+   names, .yafc round-trip incl. dictionary-keyed-by-typeDotName serialization + test);
+   web API tableSetSettings (re-sent per rebuild like the filler) + productivityOptions
+   (techs with changeRecipeProductivity, milestone-gated briefs); projectSaveAll/Load
+   carry {pages, settings} (old bare-array shape still accepted). UI: app.js state is now
+   projects[{name, pages, activePage, settings}] with activeProject (localStorage
+   migration from both older shapes; history/share/export operate on the active project;
+   import replaces the active project only), project selector + rename/add/remove in the
+   Factory bar, "⚙ Settings" dialog (mining/research % + per-tech level inputs, icons +
+   lock badges, +N%/lv meta). Verified: LDS reference scenario on a locally-built vanilla
+   bundle — 60/min uncommon plastic goal with 4x quality-module-3 recyclers = 533.33
+   recycler crafts/min (exact analytic match: 1.25 plastic x 9% exactly-uncommon), LDS
+   productivity 3 drops the LDS crafting row 533->410 crafts/min and copper imports
+   8267->5805/min; per-project settings isolation confirmed in a CDP browser pass
+   (project 1 keeps 0/0 while project 2 holds mining 50% + LDS level 3); native+wasm
+   suites green. Also fixed en route: tableSolve row flows briefly emitted true
+   per-minute values under the "perMin" key (all other endpoints emit per-second under
+   that historical name; app.js scales) — reverted to per-second for consistency.
+   Increment 14 (2026-07-04): blueprint export (user directive: auto-generate blueprints
+   with SETS of the buildings with recipes placed). New core module
+   src/yafc/model/blueprint.{h,cc}: game-format string encoding ("0" + base64(zlib(json)),
+   upstream BlueprintString.ToBpString — miniz mz_compress2 emits the whole zlib stream
+   incl. the 0x78 header and adler32 the C# code assembles by hand), blueprint JSON in
+   the upstream Blueprint.cs shape (2.0 VERSION marker, entity_number/name/position/
+   direction, recipe + recipe_quality, entity quality when non-Normal, burner fuel as a
+   burner_fuel_inventory request filter, modules as item requests with in_inventory
+   stacks into the right module inventory — mining-drill 2 / lab 3 / crafter 4, upstream
+   BlueprintModuleInventory). Layout deliberately deviates from upstream's
+   ExportRecipiesAsBlueprint (which places ONE sample building per recipe row, globally
+   shelf-packed): each row places ceil(buildingCount) copies — a stampable block of the
+   solved factory — in its own contiguous shelf sequence wrapping at a square-ish target
+   width (sqrt of total area), 1-tile gaps, positions as proper entity centers (half-tile
+   for odd sizes so top-lefts stay on the integer grid). Per-row cap (default 200,
+   truncation reported) guards against thousand-building solves. Mechanics pseudo-recipes
+   get no recipe field (upstream rule; note Mechanics DERIVES from Recipe, so the check
+   must exclude it explicitly, not just dynamic_cast<Recipe>). Web API:
+   tableExportBlueprint({label, includeFuel, maxPerRow}) on the solved table -> {blueprint,
+   buildings, truncatedRows, width, height}. UI: "Blueprint" button by Clear page; copies
+   to clipboard (prompt fallback), status line reports size + truncation; label =
+   "<project> — <page>". Tests: 2 native/wasm cases (decode round-trip through miniz
+   inflate, recipe/quality/fuel/module content, no-overlap geometry, cap + mechanics
+   rules); e2e-verified against the real Py bundle under node (150-foundry lead-plate
+   block, decoded with node's OWN zlib to prove format validity independent of miniz)
+   and in headless Chromium (button -> clipboard holds "0eNq..." string). Py bundle
+   rebuilt with the current bundler (data/ + web/dist + mancos-data all updated;
+   14.9->16.6 MB, chainProbability baked). NOT rebuilt: the two factorio_2.1_* hosted
+   bundles (need 2.1 game files, not on this machine) — still carry the broken quality
+   chain (Increment 13); other 2.0-era hosted bundles are fine without rebuild via the
+   tolerant dump reader. Not done: beacons are not placed in the blueprint (row beacon
+   configs are ignored by the exporter); no belts/inserters/power poles (pure building
+   blocks); no per-row selection UI (whole page only).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

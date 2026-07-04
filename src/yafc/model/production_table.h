@@ -73,9 +73,30 @@ class RecipeRow {
   ObjectWithQuality<EntityCrafter> entity;  // chosen crafter (null = unspecified)
   double baseCost = 1.0;  // upstream: recipe.RecipeBaseCost() from CostAnalysis
   QualityGoods fuel;      // optional; consumes fuelUsagePerSecondPerRecipe per craft
+  // This row's target/floor quality tier (upstream RecipeRow.recipe.quality):
+  // nullptr = unset, resolved to ProductionSettings::qualityNormal by
+  // RecipeParameters::Calculate. Ingredients are consumed at this tier;
+  // products are produced starting at this tier, spread upward by quality-
+  // module upgrade chance (see RecipeParameters::quality/qualityNormal).
+  Quality* quality = nullptr;
   ModuleTemplate modules;  // explicit module/beacon config (empty = filler defaults)
   RecipeParameters parameters;
   std::unique_ptr<ProductionTable> subgroup;  // nested table (this row is its header)
+
+  // User-pinned fluid/temperature variants (upstream RecipeRow.variants):
+  // when an ingredient has multiple qualifying variants (e.g. an ingredient
+  // requiring coke-oven-gas at >=100 degrees can be satisfied by any of the
+  // @100/@250/@500 goods), a row can pin which concrete one it actually
+  // consumes. Untouched ingredients keep the parser's default (the coldest
+  // qualifying variant, Ingredient::goods). Plain vector (matches
+  // Ingredient::variants' type) so it reuses the ref-list Prop() overload
+  // for .yafc (de)serialization as-is.
+  std::vector<Goods*> variants;
+
+  // Which concrete Goods this row actually consumes for `ingredient`: its
+  // pinned variant if one of the qualifying options was chosen, otherwise
+  // the parser's default (upstream RecipeRow.GetVariant).
+  Goods* ResolveIngredient(const Ingredient& ingredient) const;
 
   // Solve results:
   double recipesPerSecond = 0;
@@ -84,6 +105,19 @@ class RecipeRow {
   }
 
   bool FindLink(const QualityGoods& goods, ProductionLink** link) const;
+
+  // Per-(goods,quality) product/ingredient/fuel flows at this row's solved
+  // rate, with productivity and (when quality modules are active) the
+  // quality-upgrade distribution already applied — the same math Solve()
+  // feeds to the LP and CalculateFlow uses for reporting, exposed so callers
+  // (the web API's per-row nameplate display) don't recompute it themselves.
+  // Products positive, ingredients/fuel negative; the spent form of a fuel
+  // with HasSpentFuel is included as a positive entry.
+  struct DisplayFlow {
+    QualityGoods goods;
+    double perSecond = 0;
+  };
+  std::vector<DisplayFlow> DisplayFlows() const;
 };
 
 class ProductionTable {

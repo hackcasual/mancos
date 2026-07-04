@@ -18,6 +18,7 @@
 
 #include "yafc/analysis/dependencies.h"
 #include "yafc/analysis/milestones.h"
+#include "yafc/model/blueprint.h"
 #include "yafc/model/production_table.h"
 #include "yafc/parser/locale.h"
 #include "yafc/serialization/serialization.h"
@@ -98,8 +99,20 @@ json GoodsBrief(const Goods* g) {
 json RecipeBrief(const RecipeOrTechnology* r) {
   json in = json::array(), out = json::array();
   for (const Ingredient& i : r->ingredients) {
-    in.push_back(json{{"tdn", i.goods->typeDotName()}, {"name", i.goods->locName},
-                      {"amount", i.amount}});
+    json entry{{"tdn", i.goods->typeDotName()}, {"name", i.goods->locName},
+               {"amount", i.amount}};
+    // Alternate temperature/fluid variants this ingredient will also accept
+    // (e.g. a ">=100 degrees" requirement can be fed by gas at 100/250/500) —
+    // a row picks one via tableAddRecipe's "variants" config; unpinned
+    // ingredients default to the first (coldest) entry, i.e. `tdn` above.
+    if (i.variants.size() > 1) {
+      json variants = json::array();
+      for (const Goods* v : i.variants) {
+        variants.push_back(json{{"tdn", v->typeDotName()}, {"name", v->locName}});
+      }
+      entry["variants"] = std::move(variants);
+    }
+    in.push_back(std::move(entry));
   }
   for (const Product& p : r->products) {
     out.push_back(json{{"tdn", p.goods->typeDotName()}, {"name", p.goods->locName},
@@ -145,8 +158,36 @@ void SortRecipes(std::vector<const RecipeOrTechnology*>& list) {
                    });
 }
 
+// Same gating tiers as RecipeRank, minus the recipe-only availability/special
+// concepts: reachable-now < beyond-current-milestones < statically inaccessible.
+int GoodsRank(const Goods* g) {
+  if (g_milestones != nullptr) {
+    if (!g_milestones->IsAccessible(g)) return 2;
+    if (!g_milestones->IsAccessibleWithCurrentMilestones(g)) return 1;
+  }
+  return 0;
+}
+
 std::string Err(const std::string& message) {
   return json{{"error", message}}.dump();
+}
+
+// Empty/unresolvable input falls back to Normal — quality is always optional
+// from the UI's perspective (an unset picker means "don't care, use Normal").
+Quality* ResolveQuality(const std::string& tdn) {
+  if (Quality* q = dynamic_cast<Quality*>(Db().FindByTypeDotName(tdn))) return q;
+  return Db().qualityNormal;
+}
+
+json QualityBrief(const Quality* q) {
+  if (q == nullptr) return nullptr;
+  json brief{{"tdn", q->typeDotName()}, {"locName", q->locName}, {"level", q->level}};
+  if (q->nextQuality != nullptr) {
+    brief["next"] = q->nextQuality->typeDotName();
+    brief["upgradeChance"] = q->UpgradeChance;
+  }
+  AddMilestoneInfo(brief, q);
+  return brief;
 }
 
 }  // namespace
@@ -160,6 +201,7 @@ static std::string loadBundlePtr(unsigned ptr, unsigned length) {
     auto bundle = std::make_unique<Bundle>(ReadBundleFromMemory(bytes));
     g_bundle = std::move(bundle);
     g_table = std::make_unique<ProductionTable>();
+    g_table->settings.qualityNormal = Db().qualityNormal;
     g_deps.reset();
     g_milestones.reset();
     g_unlockedMilestones.clear();
@@ -177,22 +219,37 @@ static std::string searchGoods(std::string query, int limit) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   std::transform(query.begin(), query.end(), query.begin(),
                  [](unsigned char c) { return std::tolower(c); });
-  json prefix = json::array(), contains = json::array();
+  // Gather every match first (cheap: a substring scan over goods' names),
+  // then rank so milestone-reachable goods sort first within each bucket —
+  // ranking after an early truncation-at-`limit` would just reorder whatever
+  // the database's raw id order happened to fill the quota with first.
+  std::vector<const Goods*> prefix, contains;
   for (const Goods* g : Db().goods) {
     if (!g->isLinkable || !g->showInExplorers) continue;
-    std::string name = g->name;
-    std::transform(name.begin(), name.end(), name.begin(),
+    // Match internal AND localized names (the UI suggests localized ones).
+    std::string haystack = g->name + "\x01" + g->locName;
+    std::transform(haystack.begin(), haystack.end(), haystack.begin(),
                    [](unsigned char c) { return std::tolower(c); });
-    size_t pos = name.find(query);
+    size_t pos = haystack.find(query);
     if (pos == std::string::npos) continue;
-    (pos == 0 ? prefix : contains).push_back(GoodsBrief(g));
-    if (prefix.size() >= static_cast<size_t>(limit)) break;
+    bool atStart = pos == 0 || haystack[pos - 1] == '\x01';
+    (atStart ? prefix : contains).push_back(g);
   }
-  for (json& e : contains) {
-    if (prefix.size() >= static_cast<size_t>(limit)) break;
-    prefix.push_back(std::move(e));
+  auto byMilestone = [](const Goods* a, const Goods* b) {
+    return GoodsRank(a) < GoodsRank(b);
+  };
+  std::stable_sort(prefix.begin(), prefix.end(), byMilestone);
+  std::stable_sort(contains.begin(), contains.end(), byMilestone);
+  json out = json::array();
+  for (const Goods* g : prefix) {
+    if (out.size() >= static_cast<size_t>(limit)) break;
+    out.push_back(GoodsBrief(g));
   }
-  return prefix.dump();
+  for (const Goods* g : contains) {
+    if (out.size() >= static_cast<size_t>(limit)) break;
+    out.push_back(GoodsBrief(g));
+  }
+  return out.dump();
 }
 
 static std::string goodsInfo(std::string tdn) {
@@ -212,16 +269,24 @@ static std::string goodsInfo(std::string tdn) {
               {"consumers", std::move(consumers)}}.dump();
 }
 
-static void tableClear() { g_table = std::make_unique<ProductionTable>(); }
+static void tableClear() {
+  g_table = std::make_unique<ProductionTable>();
+  if (g_bundle != nullptr) g_table->settings.qualityNormal = Db().qualityNormal;
+}
 
 // algorithm: 0 Match, 1 AllowOverProduction, 2 AllowOverConsumption
 // (LinkAlgorithm order; desktop exposes the same per-link setting).
+// qualityTdn: "" (or unresolvable) means Normal.
 static std::string tableAddLink(std::string tdn, double amountPerSecond,
-                                int algorithm) {
+                                int algorithm, std::string qualityTdn) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* g = dynamic_cast<Goods*>(Db().FindByTypeDotName(tdn));
   if (g == nullptr) return Err("unknown goods " + tdn);
-  ProductionLink* link = g_table->AddLink({g, nullptr}, amountPerSecond);
+  // Fluids/Special goods never carry quality (products always resolve them
+  // to Normal) — force Normal here too, or a non-Normal goal link could
+  // never match any producer.
+  Quality* quality = g->AcceptsQuality() ? ResolveQuality(qualityTdn) : Db().qualityNormal;
+  ProductionLink* link = g_table->AddLink({g, quality}, amountPerSecond);
   if (algorithm >= 0 && algorithm <= 2) {
     link->algorithm = static_cast<LinkAlgorithm>(algorithm);
   }
@@ -257,10 +322,12 @@ json ModuleListJson(const std::vector<RecipeRowCustomModule>& list) {
 }
 
 // Row configuration: {"fixed": crafts/s, "entity": tdn, "fuel": tdn,
-// "modules": {"list": [{tdn,count}], "beacon": tdn, "beaconList": [...]}}.
-// Empty/missing fields pick defaults: favorite-or-first crafter, its
-// favorite-or-first fuel. A project's per-row choices matter: a reactor
-// burning mox vs uranium cells produces different spent fuel.
+// "modules": {"list": [{tdn,count}], "beacon": tdn, "beaconList": [...]},
+// "variants": [tdn, ...]}. Empty/missing fields pick defaults: favorite-or-
+// first crafter, its favorite-or-first fuel. A project's per-row choices
+// matter: a reactor burning mox vs uranium cells produces different spent
+// fuel; a temperature-gated ingredient bound to a colder or hotter fluid
+// variant changes which link it draws from (RecipeBrief's "in[].variants").
 static std::string tableAddRecipe(std::string tdn, std::string configJson) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
   auto* r = dynamic_cast<RecipeOrTechnology*>(Db().FindByTypeDotName(tdn));
@@ -275,19 +342,30 @@ static std::string tableAddRecipe(std::string tdn, std::string configJson) {
   auto* entity = dynamic_cast<EntityCrafter*>(
       Db().FindByTypeDotName(config.value("entity", "")));
   if (entity == nullptr) entity = PickDefault(r->crafters);
-  if (entity != nullptr) row->entity = {entity, Db().qualityNormal};
+  // Building quality scales crafting speed +30%/level (Quality::
+  // ApplyStandardBonus via EntityCrafter::CraftingSpeed in RecipeParameters).
+  if (entity != nullptr) {
+    row->entity = {entity, ResolveQuality(config.value("entityQuality", ""))};
+  }
 
   auto* fuel = dynamic_cast<Goods*>(Db().FindByTypeDotName(config.value("fuel", "")));
   if (fuel == nullptr && entity != nullptr && entity->hasEnergy) {
     fuel = PickDefault(entity->energy.fuels);
   }
-  if (fuel != nullptr) row->fuel = {fuel, nullptr};
+  if (fuel != nullptr) row->fuel = {fuel, Db().qualityNormal};
+
+  row->quality = ResolveQuality(config.value("quality", ""));
 
   if (const json& modules = config["modules"]; modules.is_object()) {
     row->modules.list = ParseModuleList(modules.value("list", json::array()));
     row->modules.beacon = dynamic_cast<EntityBeacon*>(
         Db().FindByTypeDotName(modules.value("beacon", "")));
     row->modules.beaconList = ParseModuleList(modules.value("beaconList", json::array()));
+  }
+  for (const auto& variantTdn : config.value("variants", std::vector<std::string>())) {
+    if (Goods* g = dynamic_cast<Goods*>(Db().FindByTypeDotName(variantTdn))) {
+      row->variants.push_back(g);
+    }
   }
   return json{{"ok", true}, {"recipe", RecipeBrief(r)}}.dump();
 }
@@ -310,6 +388,63 @@ static std::string tableSetFiller(std::string request) {
       Db().FindByTypeDotName(parsed.value("beaconModule", "")));
   filler.beaconsPerBuilding = parsed.value("beaconsPerBuilding", 8);
   return json{{"ok", true}}.dump();
+}
+
+// Project-level production settings (upstream ProjectSettings): mining and
+// research productivity as fractions (0.1 = +10%), and per-technology
+// productivity research levels (Space Age's infinite "<recipe>-productivity"
+// researches, e.g. Low density structure productivity — critical for quality
+// recycling loops, where each level compounds through the recycle cycle).
+// Input: {"miningProductivity": f, "researchProductivity": f,
+//         "productivityLevels": {"Technology.x": level, ...}}.
+// Follows the tableSetFiller pattern: re-sent after every tableClear.
+static std::string tableSetSettings(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) return Err("bad request");
+  ProductionSettings& settings = g_table->settings;
+  settings.miningProductivity = parsed.value("miningProductivity", 0.0f);
+  settings.researchProductivity = parsed.value("researchProductivity", 0.0f);
+  settings.productivityTechnologyLevels.clear();
+  if (const json& levels = parsed["productivityLevels"]; levels.is_object()) {
+    for (const auto& [tdn, level] : levels.items()) {
+      auto* tech = dynamic_cast<Technology*>(Db().FindByTypeDotName(tdn));
+      if (tech != nullptr && level.is_number() && level.get<int>() > 0) {
+        settings.productivityTechnologyLevels[tech] = level.get<int>();
+      }
+    }
+  }
+  return json{{"ok", true}}.dump();
+}
+
+// Technologies that grant per-recipe productivity per research level
+// (Technology::changeRecipeProductivity), for the project-settings UI.
+// Level-input candidates only — mining/research productivity are plain
+// percent fields, not tech-keyed.
+static std::string productivityOptions() {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json out = json::array();
+  for (const Technology* tech : Db().technologies) {
+    if (tech->changeRecipeProductivity.empty()) continue;
+    json recipes = json::array();
+    float bonus = 0;
+    for (const auto& [recipe, change] : tech->changeRecipeProductivity) {
+      recipes.push_back(json{{"tdn", recipe->typeDotName()},
+                             {"locName", recipe->locName},
+                             {"change", change}});
+      bonus = std::max(bonus, change);
+    }
+    json brief{{"tdn", tech->typeDotName()},
+               {"locName", tech->locName},
+               {"bonusPerLevel", bonus},
+               {"recipes", std::move(recipes)}};
+    AddMilestoneInfo(brief, tech);
+    out.push_back(std::move(brief));
+  }
+  std::sort(out.begin(), out.end(), [](const json& a, const json& b) {
+    return a["locName"].get<std::string>() < b["locName"].get<std::string>();
+  });
+  return out.dump();
 }
 
 // Favorites double as defaults (desktop: starred objects float to the top
@@ -345,9 +480,13 @@ static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
 
   json crafters = json::array();
   for (EntityCrafter* c : r->crafters) {
+    // width/height: tile footprint (from selection_box) — blueprint
+    // auto-generation groundwork; already in every bundle.
     crafters.push_back(brief(c, json{{"speed", c->baseCraftingSpeed},
                                      {"moduleSlots", c->moduleSlots},
                                      {"powerMw", c->basePower},
+                                     {"width", c->width},
+                                     {"height", c->height},
                                      {"selected", c == entity}}));
   }
 
@@ -410,28 +549,18 @@ static std::string tableSolve() {
   json rows = json::array();
   for (const auto& row : g_table->recipes) {
     if (row->recipe == nullptr) continue;
+    // Products, ingredients and fuel (+ its spent form) at this row's solved
+    // rate — productivity- and quality-upgrade-adjusted (RecipeRow::
+    // DisplayFlows is the single source of truth Solve()/CalculateFlow also
+    // use). Item fuels show like desktop: fuel as an ingredient, its spent
+    // form as a product; power fuels stay off the chips (nameplate shows kW).
     json flows = json::array();
-    for (const Product& p : row->recipe->products) {
-      flows.push_back(json{{"tdn", p.goods->typeDotName()},
-                           {"perMin", p.amount * row->recipesPerSecond}});
-    }
-    for (const Ingredient& i : row->recipe->ingredients) {
-      flows.push_back(json{{"tdn", i.goods->typeDotName()},
-                           {"perMin", -i.amount * row->recipesPerSecond}});
-    }
-    // Item fuels show like desktop: fuel as an ingredient, its spent form as
-    // a product. Power fuels stay off the chips — the nameplate shows kW.
-    if (row->fuel && !row->fuel.target->isPower()) {
-      double fuelFlow =
-          row->parameters.fuelUsagePerSecondPerRecipe() * row->recipesPerSecond;
-      if (fuelFlow > 0) {
-        flows.push_back(json{{"tdn", row->fuel.target->typeDotName()},
-                             {"perMin", -fuelFlow}});
-        if (Item* spent = row->fuel.target->HasSpentFuel()) {
-          flows.push_back(json{{"tdn", spent->typeDotName()},
-                               {"perMin", fuelFlow}});
-        }
-      }
+    for (const RecipeRow::DisplayFlow& f : row->DisplayFlows()) {
+      // Like links/flows below, "perMin" carries per-SECOND values (the JS
+      // layer scales to /min for display) — historical key name.
+      flows.push_back(json{{"tdn", f.goods.target->typeDotName()},
+                           {"quality", QualityBrief(f.goods.quality)},
+                           {"perMin", f.perSecond}});
     }
     json entity;
     if (row->entity.target != nullptr) {
@@ -441,6 +570,7 @@ static std::string tableSolve() {
       perBuildingMW *= row->parameters.activeEffects.energyUsageMod();
       entity = json{{"tdn", row->entity.target->typeDotName()},
                     {"locName", row->entity.target->locName},
+                    {"quality", QualityBrief(row->entity.quality)},
                     {"powerMw", perBuildingMW}};
     }
     json usedModules = json::array();
@@ -455,12 +585,16 @@ static std::string tableSolve() {
                         {"locName", row->parameters.usedBeacon->locName},
                         {"count", row->parameters.usedBeaconCount}};
     }
+    json pinnedVariants = json::array();
+    for (const Goods* v : row->variants) pinnedVariants.push_back(v->typeDotName());
     rows.push_back(json{{"recipe", RecipeBrief(row->recipe)},
+                        {"quality", QualityBrief(row->quality)},
                         {"craftsPerMin", row->recipesPerSecond},
                         {"buildings", row->buildingCount()},
                         {"entity", std::move(entity)},
                         {"modules", std::move(usedModules)},
                         {"beacon", std::move(usedBeacon)},
+                        {"variants", std::move(pinnedVariants)},
                         {"warnings", row->parameters.warningFlags},
                         {"flows", std::move(flows)}});
   }
@@ -468,6 +602,7 @@ static std::string tableSolve() {
   for (const auto& link : g_table->links) {
     links.push_back(json{{"tdn", link->goods.target->typeDotName()},
                          {"name", link->goods.target->locName},
+                         {"quality", QualityBrief(link->goods.quality)},
                          {"amount", link->amount},
                          {"flow", link->linkFlow},
                          {"algo", static_cast<int>(link->algorithm)},
@@ -476,6 +611,7 @@ static std::string tableSolve() {
   json flows = json::array();
   for (const ProductionTableFlow& flow : g_table->flow) {
     flows.push_back(json{{"tdn", flow.goods.target->typeDotName()},
+                         {"quality", QualityBrief(flow.goods.quality)},
                          {"name", flow.goods.target->locName},
                          {"perMin", flow.amount}});
   }
@@ -483,6 +619,29 @@ static std::string tableSolve() {
               {"rows", std::move(rows)},
               {"links", std::move(links)},
               {"flows", std::move(flows)}}.dump();
+}
+
+// Export the current (already-solved) table as a Factorio blueprint string:
+// each recipe row places ceil(buildings) copies of its crafter with the
+// recipe, quality, modules and (optionally) fuel configured — a stampable
+// block of the solved factory. Input: {"label", "includeFuel", "maxPerRow"}.
+static std::string tableExportBlueprint(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) parsed = json::object();
+  BlueprintOptions options;
+  options.label = parsed.value("label", std::string("mancos"));
+  options.includeFuel = parsed.value("includeFuel", true);
+  options.maxBuildingsPerRow = std::max(1, parsed.value("maxPerRow", 200));
+  std::vector<const RecipeRow*> rows;
+  for (const auto& row : g_table->recipes) rows.push_back(row.get());
+  BlueprintResult result = ExportBlueprint(rows, options);
+  if (!result.error.empty()) return Err(result.error);
+  return json{{"blueprint", result.blueprintString},
+              {"buildings", result.buildings},
+              {"truncatedRows", result.truncatedRows},
+              {"width", result.width},
+              {"height", result.height}}.dump();
 }
 
 // Research state. Input: {"filter":bool,"techs":[tdn...]}; prerequisites are
@@ -574,6 +733,21 @@ static std::string setMilestones(std::string request) {
   return milestonesJson();
 }
 
+// Quality tiers (Normal/Uncommon/Rare/.../Legendary in vanilla), level-
+// ordered, for the row/goal quality pickers. Gated the same way recipes and
+// goods are: "inaccessible" (statically unreachable) or "milestone" (locked
+// behind a milestone not yet marked reached).
+static std::string qualityList() {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  EnsureMilestones();
+  std::vector<Quality*> list(Db().qualities.begin(), Db().qualities.end());
+  std::sort(list.begin(), list.end(),
+           [](const Quality* a, const Quality* b) { return a->level < b->level; });
+  json out = json::array();
+  for (Quality* q : list) out.push_back(QualityBrief(q));
+  return out.dump();
+}
+
 // Leveled families (human priority 4): "steel-mk03" / "physical-damage-4"
 // group under a base name with a numeric level; level 0 = no level suffix.
 static std::pair<std::string, int> TechFamily(const std::string& name) {
@@ -615,12 +789,34 @@ static std::string searchTechs(std::string query, int limit) {
 // Pages live in JS state; the C++ side converts between the .yafc Project
 // format and per-page UI mirrors. The solve workspace holds the active page.
 
-// pagesJson: [{name, goals:[{tdn,perMin}], linked:[tdn], rows:[{tdn}]}]
-static std::string projectSaveAll(std::string pagesJson) {
+// stateJson: {pages: [{name, goals:[{tdn,perMin}], linked:[tdn], rows:[{tdn}]}],
+//             settings: {miningProductivity, researchProductivity,
+//                        productivityLevels: {techTdn: level}}}
+// A bare array is also accepted (the pre-settings shape) for compatibility.
+static std::string projectSaveAll(std::string stateJson) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
-  json pages = json::parse(pagesJson, nullptr, false);
-  if (pages.is_discarded() || !pages.is_array()) return Err("bad pages state");
+  json state = json::parse(stateJson, nullptr, false);
+  if (state.is_discarded()) return Err("bad pages state");
+  json pages, settingsJson = json::object();
+  if (state.is_array()) {
+    pages = std::move(state);
+  } else if (state.is_object() && state["pages"].is_array()) {
+    pages = std::move(state["pages"]);
+    if (state["settings"].is_object()) settingsJson = std::move(state["settings"]);
+  } else {
+    return Err("bad pages state");
+  }
   Project project;
+  project.settings.miningProductivity = settingsJson.value("miningProductivity", 0.0f);
+  project.settings.researchProductivity = settingsJson.value("researchProductivity", 0.0f);
+  if (const json& levels = settingsJson["productivityLevels"]; levels.is_object()) {
+    for (const auto& [tdn, level] : levels.items()) {
+      auto* tech = dynamic_cast<Technology*>(Db().FindByTypeDotName(tdn));
+      if (tech != nullptr && level.is_number() && level.get<int>() > 0) {
+        project.settings.productivityTechnologyLevels[tech] = level.get<int>();
+      }
+    }
+  }
   for (const json& p : pages) {
     auto page = std::make_unique<ProjectPage>();
     page->name = p.value("name", "Page");
@@ -637,15 +833,17 @@ static std::string projectSaveAll(std::string pagesJson) {
           Db().FindByTypeDotName(goal.value("tdn", "")));
       if (goods == nullptr) continue;
       // UI state is per-minute; .yafc stores per-second (desktop units).
+      Quality* quality = goods->AcceptsQuality() ? ResolveQuality(goal.value("quality", ""))
+                                                 : Db().qualityNormal;
       ProductionLink* link =
-          page->content.AddLink({goods, nullptr}, goal.value("perMin", 0.0) / 60.0);
+          page->content.AddLink({goods, quality}, goal.value("perMin", 0.0) / 60.0);
       link->algorithm = algoOf(goods->typeDotName());
     }
     for (const json& tdn : p.value("linked", json::array())) {
       auto* goods = dynamic_cast<Goods*>(
           Db().FindByTypeDotName(tdn.get<std::string>()));
       if (goods != nullptr) {
-        page->content.AddLink({goods, nullptr}, 0)->algorithm =
+        page->content.AddLink({goods, Db().qualityNormal}, 0)->algorithm =
             algoOf(goods->typeDotName());
       }
     }
@@ -656,12 +854,13 @@ static std::string projectSaveAll(std::string pagesJson) {
       RecipeRow* added = page->content.AddRecipe(recipe);
       if (auto* fuel = dynamic_cast<Goods*>(
               Db().FindByTypeDotName(row.value("fuel", "")))) {
-        added->fuel = {fuel, nullptr};
+        added->fuel = {fuel, Db().qualityNormal};
       }
       if (auto* entity = dynamic_cast<EntityCrafter*>(
               Db().FindByTypeDotName(row.value("entity", "")))) {
-        added->entity = {entity, Db().qualityNormal};
+        added->entity = {entity, ResolveQuality(row.value("entityQuality", ""))};
       }
+      added->quality = ResolveQuality(row.value("quality", ""));
       if (row.contains("modules") && row["modules"].is_object()) {
         const json& modules = row["modules"];
         added->modules.list = ParseModuleList(modules.value("list", json::array()));
@@ -707,9 +906,13 @@ static std::string projectLoad(std::string text) {
             static_cast<int>(link->algorithm);
       }
       if (link->amount != 0) {
-        goals.push_back(json{{"tdn", link->goods.target->typeDotName()},
-                             {"name", link->goods.target->locName},
-                             {"perMin", link->amount * 60}});
+        json goal{{"tdn", link->goods.target->typeDotName()},
+                 {"name", link->goods.target->locName},
+                 {"perMin", link->amount * 60}};
+        if (link->goods.quality != nullptr && link->goods.quality != Db().qualityNormal) {
+          goal["quality"] = link->goods.quality->typeDotName();
+        }
+        goals.push_back(std::move(goal));
       } else {
         linked.push_back(link->goods.target->typeDotName());
       }
@@ -722,6 +925,12 @@ static std::string projectLoad(std::string text) {
       if (row->fuel) rowJson["fuel"] = row->fuel.target->typeDotName();
       if (row->entity.target != nullptr) {
         rowJson["entity"] = row->entity.target->typeDotName();
+        if (row->entity.quality != nullptr && row->entity.quality != Db().qualityNormal) {
+          rowJson["entityQuality"] = row->entity.quality->typeDotName();
+        }
+      }
+      if (row->quality != nullptr && row->quality != Db().qualityNormal) {
+        rowJson["quality"] = row->quality->typeDotName();
       }
       if (!row->modules.empty()) {
         json modules{{"list", ModuleListJson(row->modules.list)},
@@ -751,7 +960,16 @@ static std::string projectLoad(std::string text) {
   }
   json errors = json::array();
   for (const std::string& error : loaded.errors) errors.push_back(error);
-  return json{{"pages", std::move(pages)}, {"errors", std::move(errors)}}.dump();
+  json productivityLevels = json::object();
+  for (const auto& [tech, level] : loaded.project->settings.productivityTechnologyLevels) {
+    productivityLevels[tech->typeDotName()] = level;
+  }
+  json settings{{"miningProductivity", loaded.project->settings.miningProductivity},
+                {"researchProductivity", loaded.project->settings.researchProductivity},
+                {"productivityLevels", std::move(productivityLevels)}};
+  return json{{"pages", std::move(pages)},
+              {"settings", std::move(settings)},
+              {"errors", std::move(errors)}}.dump();
 }
 
 static std::string iconLayers(std::string tdn) {
@@ -825,9 +1043,12 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableAddLink", &tableAddLink);
   emscripten::function("tableAddRecipe", &tableAddRecipe);
   emscripten::function("tableSetFiller", &tableSetFiller);
+  emscripten::function("tableSetSettings", &tableSetSettings);
+  emscripten::function("productivityOptions", &productivityOptions);
   emscripten::function("setDefaults", &setDefaults);
   emscripten::function("rowOptions", &rowOptions);
   emscripten::function("tableSolve", &tableSolve);
+  emscripten::function("tableExportBlueprint", &tableExportBlueprint);
   emscripten::function("projectSaveAll", &projectSaveAll);
   emscripten::function("projectLoad", &projectLoad);
   emscripten::function("listLanguages", &listLanguages);
@@ -836,6 +1057,7 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("searchTechs", &searchTechs);
   emscripten::function("milestonesList", &milestonesList);
   emscripten::function("setMilestones", &setMilestones);
+  emscripten::function("qualityList", &qualityList);
   emscripten::function("iconLayers", &iconLayers);
   emscripten::function("iconFile", &iconFile);
 }

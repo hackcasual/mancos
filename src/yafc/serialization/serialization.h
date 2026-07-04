@@ -9,6 +9,7 @@
 // from desktop yafc load even where our model is still a subset.
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +33,14 @@ class ProjectSettings {
  public:
   std::vector<FactorioObject*> milestones;
   std::vector<FactorioObject*> milestonesUnlocked;  // researched subset
+  // Upstream ProjectSettings productivity knobs — fractions (0.1 = +10%).
+  float miningProductivity = 0;
+  float researchProductivity = 0;
+  // Per-technology productivity research levels (Space Age's infinite
+  // "<recipe>-productivity" researches). Feeds ProductionSettings::
+  // productivityTechnologyLevels at solve time; critical for quality
+  // recycling loops where each level compounds through the cycle.
+  std::map<Technology*, int> productivityTechnologyLevels;
 };
 
 class Project {

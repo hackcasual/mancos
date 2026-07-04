@@ -4,7 +4,19 @@
 <meta charset="utf-8">
 <title>Mancos — factory planner</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%231c2129'/%3E%3Cpath d='M16 9a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6z' fill='%234f9dd0'/%3E%3Cpath d='M15 4h2v4h-2zM15 24h2v4h-2zM4 15h4v2H4zM24 15h4v2h-4z' fill='%23e8b23c'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#1c2129">
+<meta name="description" content="Factorio production planner in the browser — a YAFC port. Solve production chains for any modpack, plan quality recycling loops, and share factories by link. Runs fully client-side, works offline.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Mancos — Factorio factory planner">
+<meta property="og:description" content="Factorio production planner in the browser — a YAFC port. Solve production chains for any modpack, plan quality recycling loops, and share factories by link. Runs fully client-side, works offline.">
+<meta property="og:url" content="https://hackcasual.github.io/mancos/">
+<meta property="og:image" content="https://hackcasual.github.io/mancos/icons/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta name="twitter:card" content="summary">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-32.png">
 <style>
   :root {
     color-scheme: dark;
@@ -231,6 +243,33 @@
   #rowDialog .modentry input { width: 60px; }
   #rowDialog .foot { display: flex; gap: 8px; margin-top: 10px; }
   #rowDialog .foot button:first-child { margin-left: auto; }
+  /* ---- amount dialog: shared numeric entry for demand + pinned rate.
+     Native prompt() doesn't reliably show up in installed/standalone-mode
+     PWAs on mobile (iOS Safari in particular), so this replaces it. ---- */
+  #amountDialog { max-width: 380px; }
+  #amountDialog h2 { margin: 0 0 6px; font-family: var(--condensed); font-size: 16px;
+    font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+  #amountHint { margin-bottom: 10px; font-size: 12.5px; }
+  #amountDialog input[type=number] {
+    width: 100%; padding: 9px 10px; background: #14181f; color: inherit;
+    font: 16px var(--mono); border: 1px solid var(--panel-edge); border-radius: 3px;
+  }
+  #amountDialog input[type=number]:focus { outline: 1px solid var(--blueprint); outline-offset: 0; }
+  #projectSettingsDialog input[type=number] {
+    background: #14181f; color: inherit; font: inherit;
+    border: 1px solid var(--panel-edge); border-radius: 3px; padding: 3px 6px;
+  }
+  #projectSettingsDialog h2 { margin: 0 0 6px; font-family: var(--condensed); font-size: 16px;
+    font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+  #prodTechList img { width: 20px; height: 20px; image-rendering: pixelated; }
+  #prodTechList input { width: 64px; }
+  #amountDialog .foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  #amountQualityRow { margin-top: 10px; }
+  #amountQualityRow select { width: 100%; }
+  /* Quality badge: small icon overlay next to a goods/recipe name — omitted
+     entirely for Normal quality (the overwhelming default) to avoid clutter. */
+  .quality-badge { display: inline-flex; align-items: center; margin-left: 2px; }
+  .quality-badge img { width: 14px !important; height: 14px !important; }
   .plate .mods { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }
   .plate .mods img { width: 16px; height: 16px; }
   .plate button.cfg { padding: 0 6px; background: transparent; border: 0;
@@ -247,6 +286,7 @@
   <span id="status">no bundle loaded</span>
   <input type="file" id="bundleFile" accept=".yafcbundle,.zip" hidden>
   <input type="file" id="projectFile" accept=".yafc,.json" hidden>
+  <button id="installBtn" class="small ghost" hidden title="Install Mancos as an app — works offline">Install app</button>
   <button id="switchBtn" class="small ghost" disabled title="Close this project and pick a different pack">Switch pack</button>
   <button id="shareBtn" class="small ghost" disabled>Share link</button>
   <button id="importBtn" class="small ghost" disabled>Import</button>
@@ -260,7 +300,7 @@
       <button id="tabResearch" class="small ghost">Research</button>
     </div>
     <div id="catalogPanel">
-      <input type="text" id="search" placeholder="Search goods — try lead plate" disabled
+      <input type="text" id="search" placeholder="Search goods…" disabled
              aria-label="Search goods" style="margin-top:10px">
       <div id="results" class="list"></div>
       <div id="recipeInfo"></div>
@@ -289,11 +329,18 @@
       <code>.yafc</code> project files.</p>
     </div>
     <div id="workspace" hidden>
-      <div class="row" style="padding:0">
+      <div class="row" style="padding:0;flex-wrap:wrap">
         <div class="eyebrow" style="margin:0">Factory</div>
+        <select id="projectSelect" aria-label="Project"></select>
+        <button id="renameProject" class="small ghost" title="Rename project" aria-label="Rename project">✎</button>
+        <button id="addProject" class="small ghost" title="New project">+</button>
+        <button id="removeProject" class="x" title="Remove project" aria-label="Remove project" hidden>✕</button>
+        <button id="projectSettingsBtn" class="small ghost" title="Project settings — productivity research levels">⚙ Settings</button>
         <span id="pageTabs"></span>
         <button id="undoBtn" class="small ghost" title="Undo (Ctrl+Z)" disabled aria-label="Undo">↶</button>
-        <button id="redoBtn" class="small ghost" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" disabled aria-label="Redo">↷</button>
+        <button id="redoBtn" class="small ghost" title="Redo (Ctrl+Shift/Y)" disabled aria-label="Redo">↷</button>
+        <button id="blueprintBtn" class="small ghost"
+                title="Copy a Factorio blueprint of this page — every recipe row's buildings placed with recipes, modules and fuel set">Blueprint</button>
         <button id="clearBtn" class="small ghost">Clear page</button>
       </div>
       <div id="goals" style="margin-top:6px"></div>
@@ -312,6 +359,44 @@
   <div class="foot">
     <button id="rowDialogApply">Apply</button>
     <button id="rowDialogCancel" class="ghost">Cancel</button>
+  </div>
+</dialog>
+<dialog id="amountDialog">
+  <h2 id="amountTitle">Set amount</h2>
+  <div id="amountHint" class="muted"></div>
+  <input type="number" id="amountInput" step="any" inputmode="decimal" aria-label="Amount">
+  <div id="amountQualityRow" hidden>
+    <div class="eyebrow" style="margin:0 0 4px">Quality</div>
+    <select id="amountQuality" aria-label="Quality"></select>
+  </div>
+  <div class="foot">
+    <button id="amountClear" class="ghost" hidden>Unpin</button>
+    <span style="flex:1"></span>
+    <button id="amountApply">Apply</button>
+    <button id="amountCancel" class="ghost">Cancel</button>
+  </div>
+</dialog>
+<dialog id="projectSettingsDialog">
+  <h2>Project settings</h2>
+  <div class="muted" style="font-size:12.5px;margin-bottom:10px">
+    Per-project research state. Productivity levels compound through quality
+    recycling loops, so keep separate projects for different research states.
+  </div>
+  <div class="row">
+    <span style="flex:1">Mining productivity</span>
+    <input type="number" id="setMiningProd" min="0" step="10" style="width:80px"
+           inputmode="decimal" aria-label="Mining productivity percent"><span class="muted">%</span>
+  </div>
+  <div class="row">
+    <span style="flex:1">Research productivity</span>
+    <input type="number" id="setResearchProd" min="0" step="10" style="width:80px"
+           inputmode="decimal" aria-label="Research productivity percent"><span class="muted">%</span>
+  </div>
+  <div class="eyebrow">Productivity research levels</div>
+  <div id="prodTechList" style="max-height:40vh;overflow-y:auto"></div>
+  <div class="foot" style="display:flex;gap:8px;margin-top:10px">
+    <span style="flex:1"></span>
+    <button id="projectSettingsDone">Done</button>
   </div>
 </dialog>
 <dialog id="milestonesDialog">

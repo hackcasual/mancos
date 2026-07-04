@@ -269,6 +269,119 @@ TEST_CASE("modules and beacons: slot fill, compatibility, beacon profile math") 
   CHECK(row->parameters.usedModules[0].fixedCount == 2);
 }
 
+TEST_CASE("quality: module upgrade chance spreads products across quality links") {
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Item* plate = Add<Item>(objects, "plate");
+  auto* qualityModule = Add<Module>(objects, "quality-module");
+  qualityModule->moduleSpecification.baseQuality = 0.2f;
+  Recipe* smelt = Add<Recipe>(objects, "smelt");
+  smelt->time = 1;
+  smelt->allowedEffects = AllowedEffects::kAll;
+  smelt->ingredients.emplace_back(ore, 1.0f);
+  smelt->products.emplace_back(plate, 1.0f);
+  auto* furnace = Add<EntityCrafter>(objects, "furnace");
+  furnace->allowedEffects = AllowedEffects::kAll;
+  furnace->moduleSlots = 1;
+  furnace->baseCraftingSpeed = 1;
+
+  // Three-tier quality chain. The first step from the base tier scales by
+  // the base's UpgradeChance (next_probability); each further step by the
+  // reached tier's ChainProbability (2.1 chain_probability; the parser
+  // mirrors next_probability here for 2.0 data).
+  auto* normal = Add<Quality>(objects, "normal");
+  normal->level = 0;
+  normal->UpgradeChance = 1.0f;
+  auto* uncommon = Add<Quality>(objects, "uncommon");
+  uncommon->level = 1;
+  uncommon->ChainProbability = 0.5f;
+  auto* rare = Add<Quality>(objects, "rare");
+  rare->level = 2;
+  normal->nextQuality = uncommon;
+  uncommon->previousQuality = normal;
+  uncommon->nextQuality = rare;
+  rare->previousQuality = uncommon;
+
+  Database db;
+  db.LoadBuiltData(std::move(objects));
+  REQUIRE(db.qualityNormal == normal);
+
+  ProductionTable root;
+  root.settings.qualityNormal = normal;
+  RecipeRow* row = root.AddRecipe(smelt);
+  row->entity = {furnace, normal};
+  row->modules.list = {{qualityModule, 0}};
+  row->quality = normal;
+
+  root.AddLink({ore, normal});
+  ProductionLink* normalLink = root.AddLink({plate, normal}, 8);
+  ProductionLink* uncommonLink = root.AddLink({plate, uncommon});
+  ProductionLink* rareLink = root.AddLink({plate, rare});
+
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  CHECK(row->parameters.activeEffects.quality == doctest::Approx(0.2f));
+  // 8/s at normal (80% of output) implies 10 crafts/s; the remaining 20%
+  // splits 10% uncommon / 10% rare per the UpgradeChance chain above.
+  CHECK(row->recipesPerSecond == doctest::Approx(10));
+  CHECK(normalLink->linkFlow == doctest::Approx(8));
+  CHECK(uncommonLink->linkFlow == doctest::Approx(1));
+  CHECK(rareLink->linkFlow == doctest::Approx(1));
+
+  // DisplayFlows (what the web API's per-row nameplate reads) matches: the
+  // ore ingredient consumes at the row's target quality (normal), and the
+  // plate product spreads across all three tiers.
+  auto flows = row->DisplayFlows();
+  double oreFlow = 0, plateNormal = 0, plateUncommon = 0, plateRare = 0;
+  for (const RecipeRow::DisplayFlow& f : flows) {
+    if (f.goods.target == ore) {
+      REQUIRE(f.goods.quality == normal);
+      oreFlow += f.perSecond;
+    } else if (f.goods.target == plate) {
+      if (f.goods.quality == normal) plateNormal += f.perSecond;
+      else if (f.goods.quality == uncommon) plateUncommon += f.perSecond;
+      else if (f.goods.quality == rare) plateRare += f.perSecond;
+    }
+  }
+  CHECK(oreFlow == doctest::Approx(-10));
+  CHECK(plateNormal == doctest::Approx(8));
+  CHECK(plateUncommon == doctest::Approx(1));
+  CHECK(plateRare == doctest::Approx(1));
+}
+
+TEST_CASE("quality: a target tier with no quality module produces 100% at that tier") {
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Item* plate = Add<Item>(objects, "plate");
+  Recipe* smelt = Add<Recipe>(objects, "smelt");
+  smelt->time = 1;
+  smelt->ingredients.emplace_back(ore, 1.0f);
+  smelt->products.emplace_back(plate, 1.0f);
+  auto* normal = Add<Quality>(objects, "normal");
+  normal->level = 0;
+  auto* rare = Add<Quality>(objects, "rare");
+  rare->level = 1;
+  normal->nextQuality = rare;
+  rare->previousQuality = normal;
+
+  Database db;
+  db.LoadBuiltData(std::move(objects));
+
+  ProductionTable root;
+  root.settings.qualityNormal = normal;
+  RecipeRow* row = root.AddRecipe(smelt);
+  row->quality = rare;  // no modules: the row just runs at a fixed non-Normal
+                       // floor, producing 100% at that exact tier.
+  row->fixedRate = 5;
+
+  root.AddLink({ore, rare});
+  ProductionLink* rareLink = root.AddLink({plate, rare});
+  ProductionLink* normalLink = root.AddLink({plate, normal});
+
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  CHECK(rareLink->linkFlow == doctest::Approx(5));
+  CHECK(normalLink->linkFlow == doctest::Approx(0));
+}
+
 // Nuclear-style loop: a reactor burns fuel cells (fuel, not ingredient) into
 // spent cells, which reprocessing recovers into part of the ore that new
 // cells are made from. Without the spent-fuel product the loop deadlocks.

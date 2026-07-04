@@ -109,18 +109,43 @@ async function iconImg(tdn) {
   }
 }
 
-// ---- table state: pages of {name, goals, linked, rows}; the active page's
-// fields are aliased into goals/linked/rows for the render/solve paths ----
-let pages = [newPage('Page 1')];
+// Small icon badge for a quality brief ({tdn, locName, level, ...} or null/
+// undefined). Normal (level 0) renders nothing — the overwhelming default
+// case should look identical to a table with no quality tiers in use.
+async function qualityBadge(quality) {
+  if (!quality || quality.level === 0) return '';
+  return `<span class="quality-badge" title="${esc(quality.locName)}">${await iconImg(quality.tdn)}</span>`;
+}
+const qualityByTdn = (tdn) => qualities.find((q) => q.tdn === tdn);
+
+// ---- table state: projects of {name, pages, activePage, settings}; each
+// project's settings (productivity research levels etc.) apply to every
+// solve in it — different projects model e.g. different research states,
+// which matters enormously for quality recycling loops. The active project's
+// pages are aliased into pages/activePage, and the active page's fields into
+// goals/linked/rows, for the render/solve paths. ----
+let projects = [newProject('Project 1')];
+let activeProject = 0;
+let pages = projects[0].pages;
 let activePage = 0;
-let goals = pages[0].goals;   // {tdn, name, perMin}
+let goals = pages[0].goals;   // {tdn, name, perMin, quality?}
 let linked = pages[0].linked; // tdn[]
 let rows = pages[0].rows;     // {tdn}
 let bundleKey = null;
+let currentPackId = null;  // manifest pack id of the loaded bundle, or null for a local file
 
 function newPage(name) {
   return { name, goals: [], linked: [], rows: [], linkAlgos: {} };
 }
+// Productivity fractions (0.1 = +10%), matching .yafc ProjectSettings units;
+// the settings dialog displays them as percentages.
+function defaultSettings() {
+  return { miningProductivity: 0, researchProductivity: 0, productivityLevels: {} };
+}
+function newProject(name) {
+  return { name, pages: [newPage('Page 1')], activePage: 0, settings: defaultSettings() };
+}
+const projSettings = () => projects[activeProject].settings ??= defaultSettings();
 // Sparse {tdn: 1|2}: 1 = over-production allowed, 2 = over-consumption
 // allowed; absent = exact match (desktop per-link setting).
 const linkAlgoOf = (tdn) => pages[activePage].linkAlgos?.[tdn] ?? 0;
@@ -131,13 +156,23 @@ function setLinkAlgo(tdn, algo) {
   else delete page.linkAlgos[tdn];
 }
 function bindActivePage() {
+  const project = projects[activeProject];
+  pages = project.pages;
+  activePage = Math.max(0, Math.min(project.activePage ?? 0, pages.length - 1));
   const page = pages[activePage];
   goals = page.goals;
   linked = page.linked;
   rows = page.rows;
 }
 function setActivePage(index) {
-  activePage = Math.max(0, Math.min(index, pages.length - 1));
+  projects[activeProject].activePage =
+      Math.max(0, Math.min(index, pages.length - 1));
+  bindActivePage();
+  renderPageTabs();
+  rebuildAndSolve();
+}
+function setActiveProject(index) {
+  activeProject = Math.max(0, Math.min(index, projects.length - 1));
   bindActivePage();
   renderPageTabs();
   rebuildAndSolve();
@@ -149,13 +184,14 @@ async function pushResearch() {
   if (bundleKey) localStorage.setItem(bundleKey + ':research', JSON.stringify(research));
 }
 
-// ---- undo/redo: pages-state snapshots captured on every persisted change.
-// Tab switches update the tracked state silently (not undoable themselves),
-// but each undo restores the page that was active when that edit was made.
+// ---- undo/redo: projects-state snapshots captured on every persisted
+// change. Tab/project switches update the tracked state silently (not
+// undoable themselves), but each undo restores the project+page that were
+// active when that edit was made.
 const undoStack = [];
 const redoStack = [];
-let lastPagesJson = null;   // change detector (pages only)
-let lastSnapshot = null;    // full state incl. activePage
+let lastProjectsJson = null;  // change detector (projects only)
+let lastSnapshot = null;      // full state incl. activeProject
 let restoringHistory = false;
 
 function updateUndoButtons() {
@@ -164,23 +200,23 @@ function updateUndoButtons() {
 }
 
 function recordHistory() {
-  const pagesJson = JSON.stringify(pages);
-  const state = JSON.stringify({ pages, activePage });
-  if (lastPagesJson !== null && pagesJson !== lastPagesJson) {
+  const projectsJson = JSON.stringify(projects);
+  const state = JSON.stringify({ projects, activeProject });
+  if (lastProjectsJson !== null && projectsJson !== lastProjectsJson) {
     undoStack.push(lastSnapshot);
     if (undoStack.length > 100) undoStack.shift();
     redoStack.length = 0;
   }
-  lastPagesJson = pagesJson;
+  lastProjectsJson = projectsJson;
   lastSnapshot = state;
   updateUndoButtons();
 }
 
 function applySnapshot(text) {
   const parsed = JSON.parse(text);
-  pages = parsed.pages;
-  activePage = Math.min(parsed.activePage ?? 0, pages.length - 1);
-  lastPagesJson = JSON.stringify(pages);
+  projects = parsed.projects;
+  activeProject = Math.min(parsed.activeProject ?? 0, projects.length - 1);
+  lastProjectsJson = JSON.stringify(projects);
   lastSnapshot = text;
   bindActivePage();
   renderPageTabs();
@@ -188,7 +224,7 @@ function applySnapshot(text) {
 
 async function timeTravel(fromStack, toStack) {
   if (fromStack.length === 0) return;
-  toStack.push(JSON.stringify({ pages, activePage }));
+  toStack.push(JSON.stringify({ projects, activeProject }));
   restoringHistory = true;
   applySnapshot(fromStack.pop());
   await rebuildAndSolve();
@@ -216,7 +252,7 @@ document.addEventListener('keydown', (e) => {
 function persist() {
   if (!restoringHistory) recordHistory();
   if (bundleKey) {
-    localStorage.setItem(bundleKey, JSON.stringify({ pages, activePage }));
+    localStorage.setItem(bundleKey, JSON.stringify({ projects, activeProject }));
   }
 }
 function restore() {
@@ -224,25 +260,43 @@ function restore() {
   if (!saved) return false;
   try {
     const parsed = JSON.parse(saved);
-    if (Array.isArray(parsed.pages) && parsed.pages.length > 0) {
-      pages = parsed.pages;
-      activePage = Math.min(parsed.activePage ?? 0, pages.length - 1);
+    if (Array.isArray(parsed.projects) && parsed.projects.length > 0) {
+      projects = parsed.projects;
+      activeProject = Math.min(parsed.activeProject ?? 0, projects.length - 1);
+    } else if (Array.isArray(parsed.pages) && parsed.pages.length > 0) {
+      // Migrate the single-project {pages, activePage} shape.
+      projects = [{ name: 'Project 1', pages: parsed.pages,
+                    activePage: parsed.activePage ?? 0, settings: defaultSettings() }];
+      activeProject = 0;
     } else {
-      // Migrate the old single-table shape.
-      pages = [{ name: 'Page 1', goals: parsed.goals ?? [],
-                 linked: parsed.linked ?? [], rows: parsed.rows ?? [] }];
-      activePage = 0;
+      // Migrate the oldest single-table shape.
+      projects = [{ name: 'Project 1',
+                    pages: [{ name: 'Page 1', goals: parsed.goals ?? [],
+                              linked: parsed.linked ?? [], rows: parsed.rows ?? [] }],
+                    activePage: 0, settings: defaultSettings() }];
+      activeProject = 0;
     }
     bindActivePage();
     renderPageTabs();
-    return pages.some((p) => p.goals.length + p.linked.length + p.rows.length > 0);
+    return projects.some((proj) => proj.pages.some(
+        (p) => p.goals.length + p.linked.length + p.rows.length > 0));
   } catch {
     return false;
   }
 }
 
-// ---- page tabs ----
+// ---- project selector + page tabs ----
+function renderProjectSelect() {
+  const select = $('#projectSelect');
+  select.innerHTML = projects.map((p, i) =>
+      `<option value="${i}" ${i === activeProject ? 'selected' : ''}>${esc(p.name)}</option>`)
+      .join('');
+  select.onchange = () => setActiveProject(+select.value);
+  $('#removeProject').hidden = projects.length < 2;
+}
+
 function renderPageTabs() {
+  renderProjectSelect();
   const tabs = pages.map((p, i) =>
       `<button class="small${i === activePage ? '' : ' ghost'}" data-page="${i}"
          title="Double-click to rename">${esc(p.name)}</button>`).join('');
@@ -270,27 +324,74 @@ function renderPageTabs() {
   }
 }
 
+$('#addProject').onclick = () => {
+  projects.push(newProject(`Project ${projects.length + 1}`));
+  setActiveProject(projects.length - 1);
+};
+$('#renameProject').onclick = () => {
+  const name = prompt('Project name:', projects[activeProject].name);
+  if (name) { projects[activeProject].name = name; renderProjectSelect(); persist(); }
+};
+$('#removeProject').onclick = () => {
+  if (!confirm(`Remove project "${projects[activeProject].name}" and all its pages?`)) return;
+  projects.splice(activeProject, 1);
+  setActiveProject(Math.max(0, activeProject - 1));
+};
+
 async function rebuildAndSolve() {
   persist();
   await rpc('tableClear');
+  // Project settings (productivity research levels etc.) apply to every
+  // page solve; tableClear resets them, so re-send like the filler below.
+  await rpc('tableSetSettings', JSON.stringify(projSettings()));
   const filler = pages[activePage].filler;
   if (filler) await rpc('tableSetFiller', JSON.stringify(filler));
   // Table units are per SECOND (desktop yafc compatible); UI shows /min.
   for (const goal of goals) {
-    await rpc('tableAddLink', goal.tdn, goal.perMin / 60, linkAlgoOf(goal.tdn));
+    await rpc('tableAddLink', goal.tdn, goal.perMin / 60, linkAlgoOf(goal.tdn), goal.quality ?? '');
   }
-  for (const tdn of linked) await rpc('tableAddLink', tdn, 0, linkAlgoOf(tdn));
+  for (const tdn of linked) await rpc('tableAddLink', tdn, 0, linkAlgoOf(tdn), '');
   // Rows carry per-project choices ('' / missing = favorite-or-first
   // defaults): a reactor burning mox vs uranium cells is a different chain.
   for (const row of rows) {
     await rpc('tableAddRecipe', row.tdn, JSON.stringify({
       fixed: (row.fixed ?? 0) / 60,
       entity: row.entity ?? '',
+      entityQuality: row.entityQuality ?? '',
       fuel: row.fuel ?? '',
       modules: row.modules,
+      quality: row.quality ?? '',
     }));
   }
   renderSolve(await rpc('tableSolve'));
+}
+
+// ---- amount dialog: shared numeric entry for demand + pinned rate (native
+// prompt() doesn't reliably appear in installed/standalone-mode PWAs on
+// mobile, so both flows go through this in-page dialog instead).
+function openAmountDialog({ title, hint, value, clearLabel, onApply, onClear, quality }) {
+  $('#amountTitle').textContent = title;
+  $('#amountHint').textContent = hint ?? '';
+  const input = $('#amountInput');
+  input.value = value ?? '';
+  const clearBtn = $('#amountClear');
+  clearBtn.hidden = !onClear;
+  clearBtn.textContent = clearLabel ?? 'Clear';
+  const qualityRow = $('#amountQualityRow');
+  const qualitySelect = $('#amountQuality');
+  qualityRow.hidden = !quality;
+  if (quality) qualitySelect.innerHTML = qualitySelectHtml(quality.selected);
+  const submit = () => {
+    const qualityTdn = quality ? qualitySelect.value : undefined;
+    if (onApply(parseFloat(input.value), input.value, qualityTdn)) $('#amountDialog').close();
+  };
+  $('#amountApply').onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+  clearBtn.onclick = () => { onClear(); $('#amountDialog').close(); };
+  $('#amountCancel').onclick = () => $('#amountDialog').close();
+  $('#amountDialog').showModal();
+  input.focus();
+  input.select();
 }
 
 const cost = (c) => c > 0 ? `<span class="muted mono">\u00a4${c >= 100 ? c.toFixed(0) : c.toFixed(1)}</span>` : '';
@@ -326,21 +427,43 @@ async function renderSolve(result) {
   status(`${statusNames[result.status] ?? '?'} · ${rows.length} rows · ` +
          `${goals.length + linked.length} links`);
 
-  // Goals: amber pills, click amount to edit, x to remove.
-  $('#goals').innerHTML = goals.map((g, i) =>
-      `<span class="pill goal${g.perMin < 0 ? ' input' : ''}">` +
-      `<button class="chip" data-goods="${g.tdn}">${esc(g.name)}</button>
-         <button class="small ghost amt" data-goal="${i}" title="Edit demand">${g.perMin}/min</button>
-         <button class="x" data-goal-x="${i}" aria-label="Remove goal">✕</button></span>`)
-      .join('') ||
-      '<span class="muted">No demand set — search a goods, then “Set demand”.</span>';
+  // Goals: amber pills, click amount to edit, x to remove. Main products
+  // (output demand) get their own section, separate from input goals
+  // (negative perMin — "consume this much").
+  const goalPill = async (g) => {
+    const i = goals.indexOf(g);
+    return `<span class="pill goal${g.perMin < 0 ? ' input' : ''}">` +
+        `<button class="chip" data-goods="${g.tdn}">${esc(g.name)}${await qualityBadge(qualityByTdn(g.quality))}</button>
+           <button class="small ghost amt" data-goal="${i}" title="Edit demand">${g.perMin}/min</button>
+           <button class="x" data-goal-x="${i}" aria-label="Remove goal">✕</button></span>`;
+  };
+  if (goals.length === 0) {
+    $('#goals').innerHTML = '<span class="muted">No demand set — search a goods, then “Set demand”.</span>';
+  } else {
+    const outputs = goals.filter((g) => g.perMin >= 0);
+    const inputs = goals.filter((g) => g.perMin < 0);
+    const outputsHtml = (await Promise.all(outputs.map(goalPill))).join('');
+    const inputsHtml = (await Promise.all(inputs.map(goalPill))).join('');
+    $('#goals').innerHTML =
+        (outputs.length ? `<div class="eyebrow" style="margin:0 0 4px">Main products</div>${outputsHtml}` : '') +
+        (inputs.length ? `<div class="eyebrow" style="margin:10px 0 4px">Inputs to consume</div>${inputsHtml}` : '');
+  }
   for (const btn of $('#goals').querySelectorAll('[data-goal]')) {
     btn.onclick = () => {
       const goal = goals[+btn.dataset.goal];
-      const perMin = parseFloat(prompt(
-          `Demand for ${goal.name} in units/min\n(negative = input goal: consume this much)`,
-          goal.perMin));
-      if (Number.isFinite(perMin) && perMin !== 0) { goal.perMin = perMin; rebuildAndSolve(); }
+      openAmountDialog({
+        title: `Demand for ${goal.name}`,
+        hint: 'Units per minute — negative = input goal: consume this much.',
+        value: goal.perMin,
+        quality: hasSelectableQualities() ? { selected: goal.quality } : undefined,
+        onApply: (perMin, raw, qualityTdn) => {
+          if (!Number.isFinite(perMin) || perMin === 0) return false;
+          goal.perMin = perMin;
+          goal.quality = qualityTdn;
+          rebuildAndSolve();
+          return true;
+        },
+      });
     };
   }
   for (const btn of $('#goals').querySelectorAll('[data-goal-x]')) {
@@ -351,11 +474,11 @@ async function renderSolve(result) {
   const plates = await Promise.all(result.rows.map(async (row, i) => {
     const flows = (await Promise.all(row.flows.map(async (f) =>
         `<button class="flow chip ${f.perMin >= 0 ? 'pos' : 'neg'}" data-goods="${f.tdn}"` +
-        ` title="${esc(f.tdn)}">${await iconImg(f.tdn)}` +
+        ` title="${esc(f.tdn)}">${await iconImg(f.tdn)}${await qualityBadge(f.quality)}` +
         `${fmt(f.perMin * 60)}</button>`))).join('');
     const entity = row.entity && row.entity.tdn ? `<button class="entity chip" data-config="${i}"` +
         ` title="${esc(row.entity.locName)} — click to change building, fuel, modules">` +
-        `${await iconImg(row.entity.tdn)}<span class="amt">×${fmt(row.buildings)}</span>` +
+        `${await iconImg(row.entity.tdn)}${await qualityBadge(row.entity.quality)}<span class="amt">×${fmt(row.buildings)}</span>` +
         `${row.entity.powerMw > 0 ? `<span class="muted amt">${fmt(row.entity.powerMw * row.buildings * 1000)}kW</span>` : ''}` +
         `</button>` :
         `<button class="cfg" data-config="${i}" title="Configure building, fuel, modules">⚙</button>`;
@@ -367,7 +490,7 @@ async function renderSolve(result) {
           `${await iconImg(row.beacon.tdn)}<small>${row.beacon.count}</small></span>` : '';
     return `<div class="plate${row.warnings & WARN_ALARM ? ' warn' : ''}">
       <div class="head">${await iconImg(row.recipe.tdn)}
-        <span class="name" title="${esc(row.recipe.tdn)}">${esc(row.recipe.locName)}</span>
+        <span class="name" title="${esc(row.recipe.tdn)}">${esc(row.recipe.locName)}${await qualityBadge(row.quality)}</span>
         ${entity}
         ${mods || beacon ? `<span class="mods">${mods}${beacon}</span>` : ''}
         ${row.warnings ? `<span title="${esc(warningText(row.warnings))}">⚠</span>` : ''}
@@ -389,13 +512,20 @@ async function renderSolve(result) {
   for (const btn of $('#rows').querySelectorAll('[data-pin]')) {
     btn.onclick = () => {
       const row = rows[+btn.dataset.pin];
-      const current = row.fixed ? String(row.fixed) : '';
-      const answer = prompt('Pin rate in crafts/min (empty to unpin):', current);
-      if (answer === null) return;
-      const value = parseFloat(answer);
-      if (answer.trim() === '' || !Number.isFinite(value) || value <= 0) delete row.fixed;
-      else row.fixed = value;
-      rebuildAndSolve();
+      openAmountDialog({
+        title: 'Pin crafting rate',
+        hint: 'Crafts per minute. Clear the field to let the solver choose the rate.',
+        value: row.fixed ? String(row.fixed) : '',
+        clearLabel: 'Unpin',
+        onClear: row.fixed ? () => { delete row.fixed; rebuildAndSolve(); } : undefined,
+        onApply: (value, raw) => {
+          if (raw.trim() === '') { delete row.fixed; rebuildAndSolve(); return true; }
+          if (!Number.isFinite(value) || value <= 0) return false;
+          row.fixed = value;
+          rebuildAndSolve();
+          return true;
+        },
+      });
     };
   }
 
@@ -407,17 +537,17 @@ async function renderSolve(result) {
     { symbol: '≥', label: 'Over-production allowed — click to allow over-consumption' },
     { symbol: '≤', label: 'Over-consumption allowed — click for exact match' },
   ];
-  const linkPills = result.links.map((l) => {
+  const linkPills = await Promise.all(result.links.map(async (l) => {
     const isGoal = goals.some((g) => g.tdn === l.tdn);
     const bad = (l.flags & 1) !== 0;
     const algo = l.algo ?? 0;
     const unlink = isGoal ? '' :
         `<button class="x" data-unlink="${l.tdn}" aria-label="Unlink">✕</button>`;
     return `<span class="pill${bad ? ' bad' : ''}${algo ? ' loose' : ''}" title="${bad ? 'unmatched — needs both a producer and a consumer in-table' : 'matched'}">
-        <button class="chip" data-goods="${l.tdn}">${esc(l.name)}</button>
+        <button class="chip" data-goods="${l.tdn}">${esc(l.name)}${await qualityBadge(l.quality)}</button>
         <button class="small ghost algo" data-algo="${l.tdn}" title="${ALGO[algo].label}">${ALGO[algo].symbol}</button>
         <span class="amt">${fmt(l.flow * 60)}/min</span>${unlink}</span>`;
-  });
+  }));
   $('#links').innerHTML = linkPills.join('') || '<span class="muted">—</span>';
   for (const btn of $('#links').querySelectorAll('[data-unlink]')) {
     btn.onclick = () => {
@@ -434,17 +564,24 @@ async function renderSolve(result) {
     };
   }
 
-  // Off-table flows with candidate auto-pull.
+  // Off-table flows with candidate auto-pull. Pull/link-only only target
+  // Normal quality for now (the "linked" list has no quality dimension yet);
+  // a non-Normal surplus/import still shows, just without those actions.
   const flowRows = await Promise.all(result.flows
       .filter((f) => Math.abs(f.perMin) > 1e-9)
       .sort((a, b) => a.perMin - b.perMin)
-      .map(async (f) =>
-      `<div class="row">${await iconImg(f.tdn)}` +
-      `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin * 60)}/min</span>` +
-      `<button class="chip" data-goods="${f.tdn}">${esc(f.name)}</button>` +
-      `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}">` +
-      `${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
-      `<button class="small ghost" data-link="${f.tdn}">link only</button></div>`));
+      .map(async (f) => {
+        const actionable = !f.quality || f.quality.level === 0;
+        return `<div class="row">${await iconImg(f.tdn)}` +
+        `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin * 60)}/min</span>` +
+        `<button class="chip" data-goods="${f.tdn}">${esc(f.name)}${await qualityBadge(f.quality)}</button>` +
+        (actionable
+            ? `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}">` +
+              `${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
+              `<button class="small ghost" data-link="${f.tdn}">link only</button>`
+            : `<span class="muted" style="font-size:12px">set a demand to link this quality</span>`) +
+        `</div>`;
+      }));
   $('#flows').innerHTML = flowRows.join('') || '<span class="muted">—</span>';
   for (const btn of $('#flows').querySelectorAll('[data-link]')) {
     btn.onclick = () => { linked.push(btn.dataset.link); rebuildAndSolve(); };
@@ -553,14 +690,23 @@ async function showGoods(tdn) {
   await renderRecipeList(`Producers (${info.producers.length})`, info.producers,
       `<div class="eyebrow">${esc(info.goods.locName)}</div>
        <button id="goalBtn">Set demand…</button>`);
+  // Fluids/Special goods never carry a quality tier (Factorio 2.0 rule), and
+  // some packs disable the quality feature entirely (see hasSelectableQualities).
+  const goodsAcceptsQuality = info.goods.kind !== 'Fluid' && info.goods.kind !== 'Special' &&
+      hasSelectableQualities();
   $('#goalBtn').onclick = () => {
-    const perMin = parseFloat(prompt(
-        `Demand for ${info.goods.locName} in units/min\n(negative = input goal: consume this much)`,
-        '900'));
-    if (Number.isFinite(perMin) && perMin !== 0) {
-      goals.push({ tdn, name: info.goods.locName, perMin });
-      rebuildAndSolve();
-    }
+    openAmountDialog({
+      title: `Demand for ${info.goods.locName}`,
+      hint: 'Units per minute — negative = input goal: consume this much.',
+      value: 900,
+      quality: goodsAcceptsQuality ? { selected: undefined } : undefined,
+      onApply: (perMin, raw, qualityTdn) => {
+        if (!Number.isFinite(perMin) || perMin === 0) return false;
+        goals.push({ tdn, name: info.goods.locName, perMin, quality: qualityTdn });
+        rebuildAndSolve();
+        return true;
+      },
+    });
   };
 }
 
@@ -594,17 +740,25 @@ async function inflateBase64Url(encoded) {
   return new TextDecoder().decode(buffer);
 }
 
+// A .yafc file is one desktop project: importing replaces the ACTIVE web
+// project's pages+settings (other projects in this bundle are untouched).
 async function applyLoadedProject(state) {
   if (state.error) { status(`project load failed: ${state.error}`); return; }
-  pages = state.pages.map((p, i) => ({
+  const project = projects[activeProject];
+  project.pages = state.pages.map((p, i) => ({
     name: p.name || `Page ${i + 1}`,
-    goals: p.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin })),
+    goals: p.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin, quality: g.quality })),
     linked: p.linked,
     rows: p.rows,          // rows keep entity/fuel/modules mirrors verbatim
     filler: p.filler,      // page-level module defaults, if any
     linkAlgos: p.linkAlgos ?? {},
   }));
-  activePage = 0;
+  project.activePage = 0;
+  project.settings = {
+    miningProductivity: state.settings?.miningProductivity ?? 0,
+    researchProductivity: state.settings?.researchProductivity ?? 0,
+    productivityLevels: state.settings?.productivityLevels ?? {},
+  };
   bindActivePage();
   renderPageTabs();
   if (state.errors?.length) status(`project loaded with ${state.errors.length} warnings`);
@@ -615,10 +769,23 @@ async function importProjectText(text) {
   applyLoadedProject(await rpc('projectLoad', text));
 }
 
+// The active project as .yafc text ({pages, settings} shape — the C++ side
+// also still accepts the older bare pages array).
+const activeProjectSaveState = () =>
+    JSON.stringify({ pages, settings: projSettings() });
+
 $('#shareBtn').onclick = async () => {
   persist();
-  const text = await rpc('projectSaveRaw', JSON.stringify(pages));
-  const encoded = await deflateBase64Url(text);
+  const text = await rpc('projectSaveRaw', activeProjectSaveState());
+  // Envelope carries which hosted pack to auto-load and the milestone set,
+  // so opening the link on a fresh browser reproduces the table without
+  // manual pack-picking or re-clicking through the milestones dialog.
+  const envelope = JSON.stringify({
+    pack: currentPackId,
+    milestones: milestones.filter((m) => m.unlocked).map((m) => m.tdn),
+    project: text,
+  });
+  const encoded = await deflateBase64Url(envelope);
   // Fragment, not query: never sent to the server, so no URL-length limits
   // (or log leakage) apply; the link doubles as a bookmark of the table.
   const url = `${location.origin}${location.pathname}#p=${encoded}`;
@@ -631,7 +798,7 @@ $('#shareBtn').onclick = async () => {
 };
 $('#exportBtn').onclick = async () => {
   persist();
-  const text = await rpc('projectSaveRaw', JSON.stringify(pages));
+  const text = await rpc('projectSaveRaw', activeProjectSaveState());
   const a2 = document.createElement('a');
   a2.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
   a2.download = 'factory.yafc';
@@ -667,17 +834,45 @@ function sharedPayloadFromUrl() {
   return new URLSearchParams(location.search).get('p');
 }
 
-async function loadProjectFromUrl() {
+// {pack, milestones, project} envelope, or null if there's no shared link.
+// Older links held the raw .yafc project text with no envelope — those
+// still load, just without pack auto-select or milestone restore.
+async function parseSharedPayload() {
   const encoded = sharedPayloadFromUrl();
-  if (!encoded) return false;
+  if (!encoded) return null;
+  const decoded = await inflateBase64Url(encoded);
   try {
-    await importProjectText(await inflateBase64Url(encoded));
-    status('shared project loaded');
-    return true;
+    const parsed = JSON.parse(decoded);
+    if (parsed && typeof parsed === 'object' && typeof parsed.project === 'string') {
+      return parsed;
+    }
+  } catch { /* not an envelope -> legacy raw project text */ }
+  return { pack: null, milestones: null, project: decoded };
+}
+
+// Returns {ok, milestonesApplied} so the caller can skip its own
+// milestones-restore step when the link already set them.
+async function loadProjectFromUrl() {
+  let shared;
+  try {
+    shared = await parseSharedPayload();
   } catch (error) {
     status(`shared project failed: ${error.message}`);
-    return false;
+    return { ok: false, milestonesApplied: false };
   }
+  if (!shared) return { ok: false, milestonesApplied: false };
+  await importProjectText(shared.project);
+  let milestonesApplied = false;
+  if (Array.isArray(shared.milestones)) {
+    milestones = await rpc('setMilestones', JSON.stringify({ unlocked: shared.milestones }));
+    renderMilestonesSummary();
+    if (bundleKey) {
+      localStorage.setItem(bundleKey + ':milestones', JSON.stringify(shared.milestones));
+    }
+    milestonesApplied = true;
+  }
+  status('shared project loaded');
+  return { ok: true, milestonesApplied };
 }
 
 // Fragment-only navigation does not reload the page: pasting a different
@@ -833,7 +1028,9 @@ async function openRowConfig(i) {
     rowIndex: i,
     recipeTdn: row.tdn,
     entity: row.entity ?? '',
+    entityQuality: row.entityQuality ?? '',
     fuel: row.fuel ?? '',
+    quality: row.quality ?? '',
     list: (modules.list ?? []).map((m) => ({ ...m })),
     beacon: modules.beacon ?? '',
     beaconList: (modules.beaconList ?? []).map((m) => ({ ...m })),
@@ -935,9 +1132,30 @@ async function renderRowConfig() {
           optRow(m, 'add-beacon-module', false, specMeta(m))))).join('')
       : '';
 
+  // Two quality dimensions per row, both hidden when the loaded pack has no
+  // real quality tiers (hasSelectableQualities): "recipe quality" is the tier
+  // the craft targets (ingredients consume at it; products spread upward from
+  // it when quality modules are slotted); "building quality" scales the
+  // machine itself (+30% crafting speed per level, same power draw).
+  const qualityPicker = async (kind, selectedTdn) =>
+      (await Promise.all(qualities.map(async (q) =>
+      `<button class="opt${(selectedTdn || qualities[0]?.tdn) === q.tdn ? ' sel' : ''}"
+         data-${kind}="${q.tdn}">
+         ${await iconImg(q.tdn)}<span>${esc(q.locName)}</span>
+         <span class="meta">${q.inaccessible ? 'unreachable' : q.milestone ? 'locked' : ''}</span>
+       </button>`))).join('');
+  const qualityOpts = await qualityPicker('pick-quality', rowConfig.quality);
+  const entityQualityOpts = await qualityPicker('pick-entity-quality', rowConfig.entityQuality);
+
   $('#rowDialogBody').innerHTML = `
     <div class="eyebrow">Building</div><div class="opts">${crafters}</div>
+    ${hasSelectableQualities() ? `
+      <div class="eyebrow" title="+30% crafting speed per level, unchanged power draw">Building quality</div>
+      <div class="opts">${entityQualityOpts}</div>` : ''}
     ${opts.hasEnergy && opts.fuels.length ? `<div class="eyebrow">Fuel</div><div class="opts">${fuels}</div>` : ''}
+    ${hasSelectableQualities() ? `
+      <div class="eyebrow" title="Ingredients are consumed at this tier; products start at it and upgrade from quality modules">Recipe quality</div>
+      <div class="opts">${qualityOpts}</div>` : ''}
     ${opts.moduleSlots > 0 || rowConfig.list.length ? `
       <div class="eyebrow">Modules — ${opts.moduleSlots} slots</div>
       ${rowConfig.list.length
@@ -980,6 +1198,15 @@ async function renderRowConfig() {
   }
   for (const btn of body.querySelectorAll('[data-pick-fuel]')) {
     btn.onclick = () => { rowConfig.fuel = btn.dataset.pickFuel; renderRowConfig(); };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-quality]')) {
+    btn.onclick = () => { rowConfig.quality = btn.dataset.pickQuality; renderRowConfig(); };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-entity-quality]')) {
+    btn.onclick = () => {
+      rowConfig.entityQuality = btn.dataset.pickEntityQuality;
+      renderRowConfig();
+    };
   }
   // Palette click appends an entry (first entry defaults to fill-remaining);
   // clicking a module already in the template bumps its fixed count instead.
@@ -1036,7 +1263,9 @@ $('#rowDialogApply').onclick = () => {
   const row = rows[rowConfig.rowIndex];
   if (row) {
     row.entity = rowConfig.entity || undefined;
+    row.entityQuality = rowConfig.entityQuality || undefined;
     row.fuel = rowConfig.fuel || undefined;
+    row.quality = rowConfig.quality || undefined;
     const template = {
       list: rowConfig.list,
       beacon: rowConfig.beacon || undefined,
@@ -1051,6 +1280,28 @@ $('#rowDialogApply').onclick = () => {
 $('#rowDialogCancel').onclick = () => $('#rowDialog').close();
 
 // ---- milestones (desktop "Milestones" dialog) ----
+// ---- quality tiers (Normal/Uncommon/Rare/.../Legendary in vanilla) ----
+// [{tdn, locName, level, inaccessible?, milestone?}], level-ordered; fetched
+// once per bundle and re-fetched when the milestone set changes (gating is
+// milestone-based, same as recipes/goods).
+let qualities = [];
+const qualityLocked = (q) => q.inaccessible ? ' \u{1F6AB}' : q.milestone ? ' \u{1F512}' : '';
+// Some packs disable the quality feature entirely at the game-data level
+// (a common overhaul-mod choice) — the loaded Database then only carries
+// Normal plus Factorio's internal "quality-unknown" sentinel (itself always
+// inaccessible, never a real player-facing tier). Gate the whole feature's
+// UI on there being at least one REAL, reachable non-Normal tier, so those
+// packs don't show a picker whose only alternative is a dead-end sentinel.
+const hasSelectableQualities = () => qualities.some((q) => q.level > 0 && !q.inaccessible);
+async function refreshQualities() {
+  qualities = await rpc('qualityList');
+}
+function qualitySelectHtml(selectedTdn) {
+  return qualities.map((q) =>
+      `<option value="${q.tdn}" ${q.tdn === selectedTdn ? 'selected' : ''}>` +
+      `${esc(q.locName)}${qualityLocked(q)}</option>`).join('');
+}
+
 let milestones = [];  // [{tdn, locName, unlocked}] in discovery order
 
 async function pushMilestones() {
@@ -1066,6 +1317,11 @@ function renderMilestonesSummary() {
   const reached = milestones.filter((m) => m.unlocked).length;
   $('#milestonesSummary').textContent =
       milestones.length ? `${reached}/${milestones.length} reached` : '';
+  // The search hint tracks milestone progression: the next pack you haven't
+  // reached is what you're probably hunting recipes for.
+  const next = milestones.find((m) => !m.unlocked) ?? milestones.at(-1);
+  $('#search').placeholder = next
+      ? `Search goods — try ${next.locName}` : 'Search goods…';
 }
 
 async function renderMilestoneGrid() {
@@ -1090,6 +1346,47 @@ async function setAllMilestones(unlocked) {
   renderMilestoneGrid();
 }
 
+// ---- project settings: productivity research (mining % / research % /
+// per-technology levels). Per project — quality recycling loop math changes
+// dramatically with productivity research, so each project models one
+// research state. Fractions in state (matching .yafc), percent in the UI.
+let prodTechOptions = null;  // [{tdn, locName, bonusPerLevel, recipes}] per bundle
+
+async function openProjectSettings() {
+  prodTechOptions ??= await rpc('productivityOptions');
+  const settings = projSettings();
+  $('#setMiningProd').value = Math.round((settings.miningProductivity ?? 0) * 100);
+  $('#setResearchProd').value = Math.round((settings.researchProductivity ?? 0) * 100);
+  const rowsHtml = await Promise.all(prodTechOptions.map(async (t) => {
+    const level = settings.productivityLevels?.[t.tdn] ?? 0;
+    const affected = (t.recipes ?? []).map((r) => r.locName).join(', ');
+    return `<div class="row">${await iconImg(t.tdn)}
+       <span style="flex:1" title="${esc(affected)}">${esc(t.locName)}${await lockBadge(t)}</span>
+       <span class="muted mono">+${Math.round(t.bonusPerLevel * 100)}%/lv</span>
+       <input type="number" min="0" step="1" value="${level}" data-prod-tech="${t.tdn}"
+              aria-label="Research level">
+     </div>`;
+  }));
+  $('#prodTechList').innerHTML = rowsHtml.join('') ||
+      '<div class="muted">This pack has no per-recipe productivity researches.</div>';
+  $('#projectSettingsDialog').showModal();
+}
+
+$('#projectSettingsBtn').onclick = openProjectSettings;
+$('#projectSettingsDone').onclick = () => {
+  const settings = projSettings();
+  settings.miningProductivity = Math.max(0, (+$('#setMiningProd').value || 0) / 100);
+  settings.researchProductivity = Math.max(0, (+$('#setResearchProd').value || 0) / 100);
+  const levels = {};
+  for (const input of $('#prodTechList').querySelectorAll('[data-prod-tech]')) {
+    const level = Math.max(0, Math.round(+input.value || 0));
+    if (level > 0) levels[input.dataset.prodTech] = level;
+  }
+  settings.productivityLevels = levels;
+  $('#projectSettingsDialog').close();
+  rebuildAndSolve();
+};
+
 async function openMilestones() {
   await renderMilestoneGrid();
   renderMilestonesSummary();
@@ -1108,6 +1405,8 @@ $('#milestonesDialog').onclose = () => {
   // Lock badges in the open search list may be stale now.
   const search = $('#search');
   if (search.value.trim().length >= 2) search.oninput({ target: search });
+  refreshQualities();
+  prodTechOptions = null;  // milestone lock badges in the list may be stale
 };
 
 // ---- bundle loading ----
@@ -1141,7 +1440,15 @@ async function initPacks() {
   }
   if (!manifest?.packs?.length) return;
 
-  const last = localStorage.getItem('mancos:lastPack');
+  // A shared link names the pack it was built with (human priority: opening
+  // a link should never require guessing which pack to click) — it wins
+  // over the last-used pack so a link always reproduces on a fresh browser.
+  let shared = null;
+  try {
+    shared = await parseSharedPayload();
+  } catch { /* handled again, with a visible status message, in loadProjectFromUrl */ }
+  const wanted = shared?.pack || localStorage.getItem('mancos:lastPack');
+
   const packList = manifest.packs.map((p) =>
       `<button data-pack="${p.id}" data-file="${esc(p.file)}">` +
       `${esc(p.name)} <span class="muted mono">${(p.bytes / 1e6).toFixed(0)} MB</span>` +
@@ -1153,8 +1460,13 @@ async function initPacks() {
   for (const btn of $('#dropHint').querySelectorAll('[data-pack]')) {
     btn.onclick = () => loadPack(btn.dataset.pack, btn.dataset.file);
   }
-  const defaultPack = manifest.packs.find((p) => p.id === last);
-  if (defaultPack) loadPack(defaultPack.id, defaultPack.file);
+  const defaultPack = manifest.packs.find((p) => p.id === wanted);
+  if (defaultPack) {
+    loadPack(defaultPack.id, defaultPack.file);
+  } else if (shared?.pack) {
+    status(`shared link needs pack "${shared.pack}", not available here — ` +
+           `pick a pack manually, or load a local bundle built from the same mods`);
+  }
 }
 
 async function loadPack(id, file) {
@@ -1168,6 +1480,7 @@ async function loadBundleBuffer(buffer, label, packId) {
   status(`loading ${label} (${(buffer.byteLength / 1e6).toFixed(1)} MB)…`);
   const info = await rpc('loadBundle', buffer);
   if (info.error) { status(`load failed: ${info.error}`); return; }
+  currentPackId = packId;
   if (packId) localStorage.setItem('mancos:lastPack', packId);
   status(`${info.objects} objects · ${info.recipes} recipes · factorio ${info.meta.factorioVersion}`);
   bundleKey = 'mancos:' + JSON.stringify(info.meta.mods ?? label);
@@ -1175,8 +1488,9 @@ async function loadBundleBuffer(buffer, label, packId) {
   // against the wrong database.
   undoStack.length = 0;
   redoStack.length = 0;
-  lastPagesJson = null;
+  lastProjectsJson = null;
   lastSnapshot = null;
+  prodTechOptions = null;  // per-bundle: refetched on next settings open
   updateUndoButtons();
   try {
     research = JSON.parse(localStorage.getItem(bundleKey + ':research')) ??
@@ -1197,15 +1511,15 @@ async function loadBundleBuffer(buffer, label, packId) {
   $('#search').disabled = false;
   $('#dropHint').hidden = true;
   $('#workspace').hidden = false;
-  const fromUrl = await loadProjectFromUrl();
+  const { ok: fromUrl, milestonesApplied: sharedMilestonesApplied } = await loadProjectFromUrl();
   if (!fromUrl) {
     if (restore()) {
       rebuildAndSolve();
     } else {
       // Fresh pack with no saved project: start clean — never carry the
-      // previous pack's pages into this bundle's state.
-      pages = [newPage('Page 1')];
-      activePage = 0;
+      // previous pack's projects into this bundle's state.
+      projects = [newProject('Project 1')];
+      activeProject = 0;
       bindActivePage();
       renderPageTabs();
       renderSolve({ status: 0, rows: [], links: [], flows: [] });
@@ -1218,14 +1532,21 @@ async function loadBundleBuffer(buffer, label, packId) {
   // Milestones last: the first call runs the accessibility walks in the
   // worker, so the initial solve above is never queued behind them. First
   // load of a pack opens the dialog, like desktop's new-project flow.
-  let savedMilestones = null;
-  try {
-    savedMilestones = JSON.parse(localStorage.getItem(bundleKey + ':milestones'));
-  } catch { /* treat as first visit */ }
-  milestones = await rpc('setMilestones',
-                         JSON.stringify({ unlocked: savedMilestones ?? [] }));
-  renderMilestonesSummary();
-  if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
+  // Skipped entirely when a shared link already set the milestone set above.
+  if (!sharedMilestonesApplied) {
+    let savedMilestones = null;
+    try {
+      savedMilestones = JSON.parse(localStorage.getItem(bundleKey + ':milestones'));
+    } catch { /* treat as first visit */ }
+    milestones = await rpc('setMilestones',
+                           JSON.stringify({ unlocked: savedMilestones ?? [] }));
+    renderMilestonesSummary();
+    if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
+  }
+  // After milestones (shared-link or local-restore path above already ran
+  // EnsureMilestones in the worker) so this doesn't trigger the accessibility
+  // walk any earlier than the existing deferred-milestones ordering intends.
+  await refreshQualities();
 }
 
 // ---- switch pack: close the current project, back to the chooser ----
@@ -1236,20 +1557,23 @@ $('#switchBtn').onclick = () => {
   persist();
   localStorage.removeItem('mancos:lastPack');
   bundleKey = null;
-  pages = [newPage('Page 1')];
-  activePage = 0;
+  projects = [newProject('Project 1')];
+  activeProject = 0;
   bindActivePage();
   undoStack.length = 0;
   redoStack.length = 0;
-  lastPagesJson = null;
+  lastProjectsJson = null;
   lastSnapshot = null;
   milestones = [];
+  qualities = [];
+  prodTechOptions = null;
   favorites = new Set();
   for (const id of ['shareBtn', 'exportBtn', 'importBtn', 'switchBtn']) {
     document.getElementById(id).disabled = true;
   }
   $('#search').disabled = true;
   $('#search').value = '';
+  $('#search').placeholder = 'Search goods…';
   $('#results').innerHTML = '';
   $('#recipeInfo').innerHTML = '';
   $('#techResults').innerHTML = '';
@@ -1276,9 +1600,43 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('[data-add], #goalBtn')) closeSheet();
 });
 
+// ---- app mode: installable + offline via the service worker ----
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => { /* http dev */ });
+}
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $('#installBtn').hidden = false;
+});
+$('#installBtn').onclick = async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  $('#installBtn').hidden = true;
+};
+
 initPacks();
 $('#clearBtn').onclick = () => {
   pages[activePage] = newPage(pages[activePage].name);
   bindActivePage();
   rebuildAndSolve();
+};
+
+// ---- blueprint export: the current page's solved rows as a stampable
+// Factorio blueprint (sets of buildings with recipes/modules/fuel set) ----
+$('#blueprintBtn').onclick = async () => {
+  const name = `${projects[activeProject].name} — ${pages[activePage].name}`;
+  const result = await rpc('tableExportBlueprint', JSON.stringify({ label: name }));
+  if (result.error) { status(`blueprint: ${result.error}`); return; }
+  const summary = `${result.buildings} buildings, ${result.width}×${result.height} tiles` +
+      (result.truncatedRows ? ` — ${result.truncatedRows} row(s) capped at 200 buildings` : '');
+  try {
+    await navigator.clipboard.writeText(result.blueprint);
+    status(`blueprint copied — ${summary}`);
+  } catch {
+    prompt(`Blueprint (${summary}):`, result.blueprint);
+  }
 };

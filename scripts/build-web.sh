@@ -16,6 +16,14 @@ cp "$ROOT/build/web/mancos_bundler_web.js" "$ROOT/build/web/mancos_bundler_web.w
 cp "$ROOT/web/index.html" "$ROOT/web/app.js" "$ROOT/web/worker.js" "$ROOT/web/dist/"
 cp "$ROOT/web/bundler.html" "$ROOT/web/bundler.js" "$ROOT/web/bundler-worker.js" "$ROOT/web/dist/"
 
+# App mode: manifest, icons, and the service worker stamped with a build
+# version so each deploy gets its own atomic shell cache.
+cp "$ROOT/web/manifest.webmanifest" "$ROOT/web/dist/"
+mkdir -p "$ROOT/web/dist/icons"
+cp "$ROOT"/web/icons/*.png "$ROOT/web/dist/icons/"
+SW_VERSION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)"
+sed "s/__BUILD_VERSION__/$SW_VERSION/" "$ROOT/web/sw.js" > "$ROOT/web/dist/sw.js"
+
 # Publish any locally built bundles + a manifest (human priority 3). Hosted
 # deployments curate this list by license; local dev just ships what's there.
 if ls "$ROOT"/data/*.yafcbundle >/dev/null 2>&1; then

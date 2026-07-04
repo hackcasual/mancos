@@ -746,6 +746,11 @@ void DataDeserializer::DeserializeQuality(const Tbl& table) {
   quality->BeaconConsumptionFactor = GetFloat(table, "beacon_power_usage_multiplier", 1);
   quality->level = GetInt(table, "level", 0);
   quality->UpgradeChance = GetFloat(table, "next_probability", 0);
+  // Factorio 2.1 split chaining out of next_probability: an upgrade that
+  // reached this tier steps again with chain_probability. 2.0 data has no
+  // such field — there, the reached tier's own next_probability chains.
+  quality->ChainProbability =
+      GetFloat(table, "chain_probability", quality->UpgradeChance);
 }
 
 void DataDeserializer::DeserializeAsteroidChunk(const Tbl& table) {
