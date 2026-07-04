@@ -18,6 +18,7 @@
 
 #include "yafc/analysis/dependencies.h"
 #include "yafc/analysis/milestones.h"
+#include "yafc/model/blueprint.h"
 #include "yafc/model/production_table.h"
 #include "yafc/parser/locale.h"
 #include "yafc/serialization/serialization.h"
@@ -615,6 +616,29 @@ static std::string tableSolve() {
               {"flows", std::move(flows)}}.dump();
 }
 
+// Export the current (already-solved) table as a Factorio blueprint string:
+// each recipe row places ceil(buildings) copies of its crafter with the
+// recipe, quality, modules and (optionally) fuel configured — a stampable
+// block of the solved factory. Input: {"label", "includeFuel", "maxPerRow"}.
+static std::string tableExportBlueprint(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) parsed = json::object();
+  BlueprintOptions options;
+  options.label = parsed.value("label", std::string("mancos"));
+  options.includeFuel = parsed.value("includeFuel", true);
+  options.maxBuildingsPerRow = std::max(1, parsed.value("maxPerRow", 200));
+  std::vector<const RecipeRow*> rows;
+  for (const auto& row : g_table->recipes) rows.push_back(row.get());
+  BlueprintResult result = ExportBlueprint(rows, options);
+  if (!result.error.empty()) return Err(result.error);
+  return json{{"blueprint", result.blueprintString},
+              {"buildings", result.buildings},
+              {"truncatedRows", result.truncatedRows},
+              {"width", result.width},
+              {"height", result.height}}.dump();
+}
+
 // Research state. Input: {"filter":bool,"techs":[tdn...]}; prerequisites are
 // implied transitively. Returns the expanded set for persistence/rendering.
 static std::string listLanguages() {
@@ -1016,6 +1040,7 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("setDefaults", &setDefaults);
   emscripten::function("rowOptions", &rowOptions);
   emscripten::function("tableSolve", &tableSolve);
+  emscripten::function("tableExportBlueprint", &tableExportBlueprint);
   emscripten::function("projectSaveAll", &projectSaveAll);
   emscripten::function("projectLoad", &projectLoad);
   emscripten::function("listLanguages", &listLanguages);

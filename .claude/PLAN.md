@@ -34,11 +34,11 @@ Do not make changes to README.md, all text there is human authored
    bundle, each with its own productivity research state (mining %, research %,
    per-technology productivity levels — critical for quality recycling loops): see
    Increment 13 below. Reference scenario: LDS recycling for higher-quality plastic.
-10. [ ] Blueprint auto-generation (sets of buildings with recipes placed) — building
-   footprints ARE already in the bundle: Entity width/height parsed from selection_box
-   (data_deserializer_entity.cc, upstream-parity tile rounding) and round-tripped by
-   database_dump.cc. Not yet exposed via the web API; add to entity briefs when this
-   feature starts.
+10. [x] (2026-07-04) Blueprint auto-generation (sets of buildings with recipes placed) —
+   building footprints were already in the bundle (Entity width/height from
+   selection_box, upstream-parity tile rounding, round-tripped by database_dump.cc);
+   now exposed in rowOptions crafter briefs and consumed by the exporter: see
+   Increment 14 below.
 
 Goal: port [Yafc-CE](https://github.com/Yafc-CE/yafc-ce) (Factorio production calculator,
 C#/.NET 10 + SDL2 + Google OR-Tools + Lua 5.2.1) to run entirely client-side in a browser.
@@ -466,6 +466,39 @@ Recipe + status: `solver-wasm/README.md`.
    suites green. Also fixed en route: tableSolve row flows briefly emitted true
    per-minute values under the "perMin" key (all other endpoints emit per-second under
    that historical name; app.js scales) — reverted to per-second for consistency.
+   Increment 14 (2026-07-04): blueprint export (user directive: auto-generate blueprints
+   with SETS of the buildings with recipes placed). New core module
+   src/yafc/model/blueprint.{h,cc}: game-format string encoding ("0" + base64(zlib(json)),
+   upstream BlueprintString.ToBpString — miniz mz_compress2 emits the whole zlib stream
+   incl. the 0x78 header and adler32 the C# code assembles by hand), blueprint JSON in
+   the upstream Blueprint.cs shape (2.0 VERSION marker, entity_number/name/position/
+   direction, recipe + recipe_quality, entity quality when non-Normal, burner fuel as a
+   burner_fuel_inventory request filter, modules as item requests with in_inventory
+   stacks into the right module inventory — mining-drill 2 / lab 3 / crafter 4, upstream
+   BlueprintModuleInventory). Layout deliberately deviates from upstream's
+   ExportRecipiesAsBlueprint (which places ONE sample building per recipe row, globally
+   shelf-packed): each row places ceil(buildingCount) copies — a stampable block of the
+   solved factory — in its own contiguous shelf sequence wrapping at a square-ish target
+   width (sqrt of total area), 1-tile gaps, positions as proper entity centers (half-tile
+   for odd sizes so top-lefts stay on the integer grid). Per-row cap (default 200,
+   truncation reported) guards against thousand-building solves. Mechanics pseudo-recipes
+   get no recipe field (upstream rule; note Mechanics DERIVES from Recipe, so the check
+   must exclude it explicitly, not just dynamic_cast<Recipe>). Web API:
+   tableExportBlueprint({label, includeFuel, maxPerRow}) on the solved table -> {blueprint,
+   buildings, truncatedRows, width, height}. UI: "Blueprint" button by Clear page; copies
+   to clipboard (prompt fallback), status line reports size + truncation; label =
+   "<project> — <page>". Tests: 2 native/wasm cases (decode round-trip through miniz
+   inflate, recipe/quality/fuel/module content, no-overlap geometry, cap + mechanics
+   rules); e2e-verified against the real Py bundle under node (150-foundry lead-plate
+   block, decoded with node's OWN zlib to prove format validity independent of miniz)
+   and in headless Chromium (button -> clipboard holds "0eNq..." string). Py bundle
+   rebuilt with the current bundler (data/ + web/dist + mancos-data all updated;
+   14.9->16.6 MB, chainProbability baked). NOT rebuilt: the two factorio_2.1_* hosted
+   bundles (need 2.1 game files, not on this machine) — still carry the broken quality
+   chain (Increment 13); other 2.0-era hosted bundles are fine without rebuild via the
+   tolerant dump reader. Not done: beacons are not placed in the blueprint (row beacon
+   configs are ignored by the exporter); no belts/inserters/power poles (pure building
+   blocks); no per-row selection UI (whole page only).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

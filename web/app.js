@@ -1605,3 +1605,19 @@ $('#clearBtn').onclick = () => {
   bindActivePage();
   rebuildAndSolve();
 };
+
+// ---- blueprint export: the current page's solved rows as a stampable
+// Factorio blueprint (sets of buildings with recipes/modules/fuel set) ----
+$('#blueprintBtn').onclick = async () => {
+  const name = `${projects[activeProject].name} — ${pages[activePage].name}`;
+  const result = await rpc('tableExportBlueprint', JSON.stringify({ label: name }));
+  if (result.error) { status(`blueprint: ${result.error}`); return; }
+  const summary = `${result.buildings} buildings, ${result.width}×${result.height} tiles` +
+      (result.truncatedRows ? ` — ${result.truncatedRows} row(s) capped at 200 buildings` : '');
+  try {
+    await navigator.clipboard.writeText(result.blueprint);
+    status(`blueprint copied — ${summary}`);
+  } catch {
+    prompt(`Blueprint (${summary}):`, result.blueprint);
+  }
+};

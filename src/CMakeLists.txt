@@ -5,6 +5,7 @@ add_library(yafc_core
   yafc/analysis/dependency_node.cc
   yafc/analysis/milestones.cc
   yafc/analysis/technology_science_analysis.cc
+  yafc/model/blueprint.cc
   yafc/model/data_classes.cc
   yafc/model/database.cc
   yafc/model/production_table.cc
