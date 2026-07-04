@@ -475,9 +475,13 @@ static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
 
   json crafters = json::array();
   for (EntityCrafter* c : r->crafters) {
+    // width/height: tile footprint (from selection_box) — blueprint
+    // auto-generation groundwork; already in every bundle.
     crafters.push_back(brief(c, json{{"speed", c->baseCraftingSpeed},
                                      {"moduleSlots", c->moduleSlots},
                                      {"powerMw", c->basePower},
+                                     {"width", c->width},
+                                     {"height", c->height},
                                      {"selected", c == entity}}));
   }
 
