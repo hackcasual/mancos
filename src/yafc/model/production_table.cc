@@ -15,6 +15,13 @@ namespace {
 // paired with the quality each fraction lands at. Without quality modules
 // (qualityMod <= 0) the whole amount lands at `base` (a row can still target
 // a non-Normal floor with no modules — 100% at that exact tier, no spread).
+//
+// Chance model (covers both Factorio data eras — see Quality field docs):
+//   P(>= tier 1)   = qualityMod x next_probability(base)
+//   P(>= tier k+1) = P(>= tier k) x ChainProbability(tier k)
+// where ChainProbability is 2.1's chain_probability, or (for 2.0 data) the
+// reached tier's own next_probability — the 2.0 chaining rule.
+//
 // Milestone-gating the top of this walk (upstream Quality.MaxAccessible) is
 // not ported yet: this walks the full quality chain the loaded data defines.
 std::vector<std::pair<Quality*, double>> QualityDistribution(Quality* base, double qualityMod) {
@@ -22,7 +29,7 @@ std::vector<std::pair<Quality*, double>> QualityDistribution(Quality* base, doub
   if (qualityMod > 0 && base != nullptr) {
     double running = 1.0;
     for (Quality* q = base; q->nextQuality != nullptr; q = q->nextQuality) {
-      running *= q->UpgradeChance;
+      running *= q == base ? q->UpgradeChance : q->ChainProbability;
       probabilityAtLeast.push_back(std::min(1.0, running * qualityMod));
     }
     for (size_t j = 0; j + 1 < probabilityAtLeast.size(); ++j) {

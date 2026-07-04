@@ -285,14 +285,16 @@ TEST_CASE("quality: module upgrade chance spreads products across quality links"
   furnace->moduleSlots = 1;
   furnace->baseCraftingSpeed = 1;
 
-  // Three-tier quality chain; UpgradeChance lives on the tier being upgraded
-  // FROM (chance of reaching the next tier before the module bonus scales it).
+  // Three-tier quality chain. The first step from the base tier scales by
+  // the base's UpgradeChance (next_probability); each further step by the
+  // reached tier's ChainProbability (2.1 chain_probability; the parser
+  // mirrors next_probability here for 2.0 data).
   auto* normal = Add<Quality>(objects, "normal");
   normal->level = 0;
   normal->UpgradeChance = 1.0f;
   auto* uncommon = Add<Quality>(objects, "uncommon");
   uncommon->level = 1;
-  uncommon->UpgradeChance = 0.5f;
+  uncommon->ChainProbability = 0.5f;
   auto* rare = Add<Quality>(objects, "rare");
   rare->level = 2;
   normal->nextQuality = uncommon;

@@ -240,6 +240,40 @@ TEST_CASE("quality round-trips through save/load: link goods and row recipe") {
   CHECK(loadedTable.recipes[0]->quality == rare);
 }
 
+TEST_CASE("productivity settings round-trip: mining/research floats and tech levels") {
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Item* plate = Add<Item>(objects, "plate");
+  Recipe* smelt = Add<Recipe>(objects, "smelt");
+  smelt->ingredients.emplace_back(ore, 1.0f);
+  smelt->products.emplace_back(plate, 1.0f);
+  auto* prodTech = Add<Technology>(objects, "plate-productivity");
+  prodTech->changeRecipeProductivity[smelt] = 0.1f;
+  smelt->technologyProductivity[prodTech] = 0.1f;
+  Database db;
+  db.LoadBuiltData(std::move(objects));
+
+  auto project = std::make_unique<Project>();
+  project->settings.miningProductivity = 0.5f;
+  project->settings.researchProductivity = 0.2f;
+  project->settings.productivityTechnologyLevels[prodTech] = 3;
+  auto page = std::make_unique<ProjectPage>();
+  page->guid = "0123456789abcdef";
+  page->name = "P";
+  project->pages.push_back(std::move(page));
+
+  std::string text = SaveProjectToString(*project);
+  CHECK(text.find("\"Technology.plate-productivity\": 3") != std::string::npos);
+
+  LoadResult loaded = LoadProjectFromString(text, db);
+  REQUIRE(loaded.project != nullptr);
+  CHECK(loaded.errors.empty());
+  CHECK(loaded.project->settings.miningProductivity == doctest::Approx(0.5f));
+  CHECK(loaded.project->settings.researchProductivity == doctest::Approx(0.2f));
+  REQUIRE(loaded.project->settings.productivityTechnologyLevels.size() == 1);
+  CHECK(loaded.project->settings.productivityTechnologyLevels.at(prodTech) == 3);
+}
+
 TEST_CASE("undo and redo restore project snapshots") {
   SerWorld w;
   auto project = w.MakeProject();

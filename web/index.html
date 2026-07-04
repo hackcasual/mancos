@@ -246,6 +246,14 @@
     font: 16px var(--mono); border: 1px solid var(--panel-edge); border-radius: 3px;
   }
   #amountDialog input[type=number]:focus { outline: 1px solid var(--blueprint); outline-offset: 0; }
+  #projectSettingsDialog input[type=number] {
+    background: #14181f; color: inherit; font: inherit;
+    border: 1px solid var(--panel-edge); border-radius: 3px; padding: 3px 6px;
+  }
+  #projectSettingsDialog h2 { margin: 0 0 6px; font-family: var(--condensed); font-size: 16px;
+    font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+  #prodTechList img { width: 20px; height: 20px; image-rendering: pixelated; }
+  #prodTechList input { width: 64px; }
   #amountDialog .foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
   #amountQualityRow { margin-top: 10px; }
   #amountQualityRow select { width: 100%; }
@@ -312,8 +320,13 @@
       <code>.yafc</code> project files.</p>
     </div>
     <div id="workspace" hidden>
-      <div class="row" style="padding:0">
+      <div class="row" style="padding:0;flex-wrap:wrap">
         <div class="eyebrow" style="margin:0">Factory</div>
+        <select id="projectSelect" aria-label="Project"></select>
+        <button id="renameProject" class="small ghost" title="Rename project" aria-label="Rename project">✎</button>
+        <button id="addProject" class="small ghost" title="New project">+</button>
+        <button id="removeProject" class="x" title="Remove project" aria-label="Remove project" hidden>✕</button>
+        <button id="projectSettingsBtn" class="small ghost" title="Project settings — productivity research levels">⚙ Settings</button>
         <span id="pageTabs"></span>
         <button id="undoBtn" class="small ghost" title="Undo (Ctrl+Z)" disabled aria-label="Undo">↶</button>
         <button id="redoBtn" class="small ghost" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" disabled aria-label="Redo">↷</button>
@@ -350,6 +363,29 @@
     <span style="flex:1"></span>
     <button id="amountApply">Apply</button>
     <button id="amountCancel" class="ghost">Cancel</button>
+  </div>
+</dialog>
+<dialog id="projectSettingsDialog">
+  <h2>Project settings</h2>
+  <div class="muted" style="font-size:12.5px;margin-bottom:10px">
+    Per-project research state. Productivity levels compound through quality
+    recycling loops, so keep separate projects for different research states.
+  </div>
+  <div class="row">
+    <span style="flex:1">Mining productivity</span>
+    <input type="number" id="setMiningProd" min="0" step="10" style="width:80px"
+           inputmode="decimal" aria-label="Mining productivity percent"><span class="muted">%</span>
+  </div>
+  <div class="row">
+    <span style="flex:1">Research productivity</span>
+    <input type="number" id="setResearchProd" min="0" step="10" style="width:80px"
+           inputmode="decimal" aria-label="Research productivity percent"><span class="muted">%</span>
+  </div>
+  <div class="eyebrow">Productivity research levels</div>
+  <div id="prodTechList" style="max-height:40vh;overflow-y:auto"></div>
+  <div class="foot" style="display:flex;gap:8px;margin-top:10px">
+    <span style="flex:1"></span>
+    <button id="projectSettingsDone">Done</button>
   </div>
 </dialog>
 <dialog id="milestonesDialog">

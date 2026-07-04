@@ -118,11 +118,17 @@ async function qualityBadge(quality) {
 }
 const qualityByTdn = (tdn) => qualities.find((q) => q.tdn === tdn);
 
-// ---- table state: pages of {name, goals, linked, rows}; the active page's
-// fields are aliased into goals/linked/rows for the render/solve paths ----
-let pages = [newPage('Page 1')];
+// ---- table state: projects of {name, pages, activePage, settings}; each
+// project's settings (productivity research levels etc.) apply to every
+// solve in it — different projects model e.g. different research states,
+// which matters enormously for quality recycling loops. The active project's
+// pages are aliased into pages/activePage, and the active page's fields into
+// goals/linked/rows, for the render/solve paths. ----
+let projects = [newProject('Project 1')];
+let activeProject = 0;
+let pages = projects[0].pages;
 let activePage = 0;
-let goals = pages[0].goals;   // {tdn, name, perMin}
+let goals = pages[0].goals;   // {tdn, name, perMin, quality?}
 let linked = pages[0].linked; // tdn[]
 let rows = pages[0].rows;     // {tdn}
 let bundleKey = null;
@@ -131,6 +137,15 @@ let currentPackId = null;  // manifest pack id of the loaded bundle, or null for
 function newPage(name) {
   return { name, goals: [], linked: [], rows: [], linkAlgos: {} };
 }
+// Productivity fractions (0.1 = +10%), matching .yafc ProjectSettings units;
+// the settings dialog displays them as percentages.
+function defaultSettings() {
+  return { miningProductivity: 0, researchProductivity: 0, productivityLevels: {} };
+}
+function newProject(name) {
+  return { name, pages: [newPage('Page 1')], activePage: 0, settings: defaultSettings() };
+}
+const projSettings = () => projects[activeProject].settings ??= defaultSettings();
 // Sparse {tdn: 1|2}: 1 = over-production allowed, 2 = over-consumption
 // allowed; absent = exact match (desktop per-link setting).
 const linkAlgoOf = (tdn) => pages[activePage].linkAlgos?.[tdn] ?? 0;
@@ -141,13 +156,23 @@ function setLinkAlgo(tdn, algo) {
   else delete page.linkAlgos[tdn];
 }
 function bindActivePage() {
+  const project = projects[activeProject];
+  pages = project.pages;
+  activePage = Math.max(0, Math.min(project.activePage ?? 0, pages.length - 1));
   const page = pages[activePage];
   goals = page.goals;
   linked = page.linked;
   rows = page.rows;
 }
 function setActivePage(index) {
-  activePage = Math.max(0, Math.min(index, pages.length - 1));
+  projects[activeProject].activePage =
+      Math.max(0, Math.min(index, pages.length - 1));
+  bindActivePage();
+  renderPageTabs();
+  rebuildAndSolve();
+}
+function setActiveProject(index) {
+  activeProject = Math.max(0, Math.min(index, projects.length - 1));
   bindActivePage();
   renderPageTabs();
   rebuildAndSolve();
@@ -159,13 +184,14 @@ async function pushResearch() {
   if (bundleKey) localStorage.setItem(bundleKey + ':research', JSON.stringify(research));
 }
 
-// ---- undo/redo: pages-state snapshots captured on every persisted change.
-// Tab switches update the tracked state silently (not undoable themselves),
-// but each undo restores the page that was active when that edit was made.
+// ---- undo/redo: projects-state snapshots captured on every persisted
+// change. Tab/project switches update the tracked state silently (not
+// undoable themselves), but each undo restores the project+page that were
+// active when that edit was made.
 const undoStack = [];
 const redoStack = [];
-let lastPagesJson = null;   // change detector (pages only)
-let lastSnapshot = null;    // full state incl. activePage
+let lastProjectsJson = null;  // change detector (projects only)
+let lastSnapshot = null;      // full state incl. activeProject
 let restoringHistory = false;
 
 function updateUndoButtons() {
@@ -174,23 +200,23 @@ function updateUndoButtons() {
 }
 
 function recordHistory() {
-  const pagesJson = JSON.stringify(pages);
-  const state = JSON.stringify({ pages, activePage });
-  if (lastPagesJson !== null && pagesJson !== lastPagesJson) {
+  const projectsJson = JSON.stringify(projects);
+  const state = JSON.stringify({ projects, activeProject });
+  if (lastProjectsJson !== null && projectsJson !== lastProjectsJson) {
     undoStack.push(lastSnapshot);
     if (undoStack.length > 100) undoStack.shift();
     redoStack.length = 0;
   }
-  lastPagesJson = pagesJson;
+  lastProjectsJson = projectsJson;
   lastSnapshot = state;
   updateUndoButtons();
 }
 
 function applySnapshot(text) {
   const parsed = JSON.parse(text);
-  pages = parsed.pages;
-  activePage = Math.min(parsed.activePage ?? 0, pages.length - 1);
-  lastPagesJson = JSON.stringify(pages);
+  projects = parsed.projects;
+  activeProject = Math.min(parsed.activeProject ?? 0, projects.length - 1);
+  lastProjectsJson = JSON.stringify(projects);
   lastSnapshot = text;
   bindActivePage();
   renderPageTabs();
@@ -198,7 +224,7 @@ function applySnapshot(text) {
 
 async function timeTravel(fromStack, toStack) {
   if (fromStack.length === 0) return;
-  toStack.push(JSON.stringify({ pages, activePage }));
+  toStack.push(JSON.stringify({ projects, activeProject }));
   restoringHistory = true;
   applySnapshot(fromStack.pop());
   await rebuildAndSolve();
@@ -226,7 +252,7 @@ document.addEventListener('keydown', (e) => {
 function persist() {
   if (!restoringHistory) recordHistory();
   if (bundleKey) {
-    localStorage.setItem(bundleKey, JSON.stringify({ pages, activePage }));
+    localStorage.setItem(bundleKey, JSON.stringify({ projects, activeProject }));
   }
 }
 function restore() {
@@ -234,25 +260,43 @@ function restore() {
   if (!saved) return false;
   try {
     const parsed = JSON.parse(saved);
-    if (Array.isArray(parsed.pages) && parsed.pages.length > 0) {
-      pages = parsed.pages;
-      activePage = Math.min(parsed.activePage ?? 0, pages.length - 1);
+    if (Array.isArray(parsed.projects) && parsed.projects.length > 0) {
+      projects = parsed.projects;
+      activeProject = Math.min(parsed.activeProject ?? 0, projects.length - 1);
+    } else if (Array.isArray(parsed.pages) && parsed.pages.length > 0) {
+      // Migrate the single-project {pages, activePage} shape.
+      projects = [{ name: 'Project 1', pages: parsed.pages,
+                    activePage: parsed.activePage ?? 0, settings: defaultSettings() }];
+      activeProject = 0;
     } else {
-      // Migrate the old single-table shape.
-      pages = [{ name: 'Page 1', goals: parsed.goals ?? [],
-                 linked: parsed.linked ?? [], rows: parsed.rows ?? [] }];
-      activePage = 0;
+      // Migrate the oldest single-table shape.
+      projects = [{ name: 'Project 1',
+                    pages: [{ name: 'Page 1', goals: parsed.goals ?? [],
+                              linked: parsed.linked ?? [], rows: parsed.rows ?? [] }],
+                    activePage: 0, settings: defaultSettings() }];
+      activeProject = 0;
     }
     bindActivePage();
     renderPageTabs();
-    return pages.some((p) => p.goals.length + p.linked.length + p.rows.length > 0);
+    return projects.some((proj) => proj.pages.some(
+        (p) => p.goals.length + p.linked.length + p.rows.length > 0));
   } catch {
     return false;
   }
 }
 
-// ---- page tabs ----
+// ---- project selector + page tabs ----
+function renderProjectSelect() {
+  const select = $('#projectSelect');
+  select.innerHTML = projects.map((p, i) =>
+      `<option value="${i}" ${i === activeProject ? 'selected' : ''}>${esc(p.name)}</option>`)
+      .join('');
+  select.onchange = () => setActiveProject(+select.value);
+  $('#removeProject').hidden = projects.length < 2;
+}
+
 function renderPageTabs() {
+  renderProjectSelect();
   const tabs = pages.map((p, i) =>
       `<button class="small${i === activePage ? '' : ' ghost'}" data-page="${i}"
          title="Double-click to rename">${esc(p.name)}</button>`).join('');
@@ -280,9 +324,26 @@ function renderPageTabs() {
   }
 }
 
+$('#addProject').onclick = () => {
+  projects.push(newProject(`Project ${projects.length + 1}`));
+  setActiveProject(projects.length - 1);
+};
+$('#renameProject').onclick = () => {
+  const name = prompt('Project name:', projects[activeProject].name);
+  if (name) { projects[activeProject].name = name; renderProjectSelect(); persist(); }
+};
+$('#removeProject').onclick = () => {
+  if (!confirm(`Remove project "${projects[activeProject].name}" and all its pages?`)) return;
+  projects.splice(activeProject, 1);
+  setActiveProject(Math.max(0, activeProject - 1));
+};
+
 async function rebuildAndSolve() {
   persist();
   await rpc('tableClear');
+  // Project settings (productivity research levels etc.) apply to every
+  // page solve; tableClear resets them, so re-send like the filler below.
+  await rpc('tableSetSettings', JSON.stringify(projSettings()));
   const filler = pages[activePage].filler;
   if (filler) await rpc('tableSetFiller', JSON.stringify(filler));
   // Table units are per SECOND (desktop yafc compatible); UI shows /min.
@@ -678,9 +739,12 @@ async function inflateBase64Url(encoded) {
   return new TextDecoder().decode(buffer);
 }
 
+// A .yafc file is one desktop project: importing replaces the ACTIVE web
+// project's pages+settings (other projects in this bundle are untouched).
 async function applyLoadedProject(state) {
   if (state.error) { status(`project load failed: ${state.error}`); return; }
-  pages = state.pages.map((p, i) => ({
+  const project = projects[activeProject];
+  project.pages = state.pages.map((p, i) => ({
     name: p.name || `Page ${i + 1}`,
     goals: p.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin, quality: g.quality })),
     linked: p.linked,
@@ -688,7 +752,12 @@ async function applyLoadedProject(state) {
     filler: p.filler,      // page-level module defaults, if any
     linkAlgos: p.linkAlgos ?? {},
   }));
-  activePage = 0;
+  project.activePage = 0;
+  project.settings = {
+    miningProductivity: state.settings?.miningProductivity ?? 0,
+    researchProductivity: state.settings?.researchProductivity ?? 0,
+    productivityLevels: state.settings?.productivityLevels ?? {},
+  };
   bindActivePage();
   renderPageTabs();
   if (state.errors?.length) status(`project loaded with ${state.errors.length} warnings`);
@@ -699,9 +768,14 @@ async function importProjectText(text) {
   applyLoadedProject(await rpc('projectLoad', text));
 }
 
+// The active project as .yafc text ({pages, settings} shape — the C++ side
+// also still accepts the older bare pages array).
+const activeProjectSaveState = () =>
+    JSON.stringify({ pages, settings: projSettings() });
+
 $('#shareBtn').onclick = async () => {
   persist();
-  const text = await rpc('projectSaveRaw', JSON.stringify(pages));
+  const text = await rpc('projectSaveRaw', activeProjectSaveState());
   // Envelope carries which hosted pack to auto-load and the milestone set,
   // so opening the link on a fresh browser reproduces the table without
   // manual pack-picking or re-clicking through the milestones dialog.
@@ -723,7 +797,7 @@ $('#shareBtn').onclick = async () => {
 };
 $('#exportBtn').onclick = async () => {
   persist();
-  const text = await rpc('projectSaveRaw', JSON.stringify(pages));
+  const text = await rpc('projectSaveRaw', activeProjectSaveState());
   const a2 = document.createElement('a');
   a2.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
   a2.download = 'factory.yafc';
@@ -1253,6 +1327,47 @@ async function setAllMilestones(unlocked) {
   renderMilestoneGrid();
 }
 
+// ---- project settings: productivity research (mining % / research % /
+// per-technology levels). Per project — quality recycling loop math changes
+// dramatically with productivity research, so each project models one
+// research state. Fractions in state (matching .yafc), percent in the UI.
+let prodTechOptions = null;  // [{tdn, locName, bonusPerLevel, recipes}] per bundle
+
+async function openProjectSettings() {
+  prodTechOptions ??= await rpc('productivityOptions');
+  const settings = projSettings();
+  $('#setMiningProd').value = Math.round((settings.miningProductivity ?? 0) * 100);
+  $('#setResearchProd').value = Math.round((settings.researchProductivity ?? 0) * 100);
+  const rowsHtml = await Promise.all(prodTechOptions.map(async (t) => {
+    const level = settings.productivityLevels?.[t.tdn] ?? 0;
+    const affected = (t.recipes ?? []).map((r) => r.locName).join(', ');
+    return `<div class="row">${await iconImg(t.tdn)}
+       <span style="flex:1" title="${esc(affected)}">${esc(t.locName)}${await lockBadge(t)}</span>
+       <span class="muted mono">+${Math.round(t.bonusPerLevel * 100)}%/lv</span>
+       <input type="number" min="0" step="1" value="${level}" data-prod-tech="${t.tdn}"
+              aria-label="Research level">
+     </div>`;
+  }));
+  $('#prodTechList').innerHTML = rowsHtml.join('') ||
+      '<div class="muted">This pack has no per-recipe productivity researches.</div>';
+  $('#projectSettingsDialog').showModal();
+}
+
+$('#projectSettingsBtn').onclick = openProjectSettings;
+$('#projectSettingsDone').onclick = () => {
+  const settings = projSettings();
+  settings.miningProductivity = Math.max(0, (+$('#setMiningProd').value || 0) / 100);
+  settings.researchProductivity = Math.max(0, (+$('#setResearchProd').value || 0) / 100);
+  const levels = {};
+  for (const input of $('#prodTechList').querySelectorAll('[data-prod-tech]')) {
+    const level = Math.max(0, Math.round(+input.value || 0));
+    if (level > 0) levels[input.dataset.prodTech] = level;
+  }
+  settings.productivityLevels = levels;
+  $('#projectSettingsDialog').close();
+  rebuildAndSolve();
+};
+
 async function openMilestones() {
   await renderMilestoneGrid();
   renderMilestonesSummary();
@@ -1272,6 +1387,7 @@ $('#milestonesDialog').onclose = () => {
   const search = $('#search');
   if (search.value.trim().length >= 2) search.oninput({ target: search });
   refreshQualities();
+  prodTechOptions = null;  // milestone lock badges in the list may be stale
 };
 
 // ---- bundle loading ----
@@ -1353,8 +1469,9 @@ async function loadBundleBuffer(buffer, label, packId) {
   // against the wrong database.
   undoStack.length = 0;
   redoStack.length = 0;
-  lastPagesJson = null;
+  lastProjectsJson = null;
   lastSnapshot = null;
+  prodTechOptions = null;  // per-bundle: refetched on next settings open
   updateUndoButtons();
   try {
     research = JSON.parse(localStorage.getItem(bundleKey + ':research')) ??
@@ -1381,9 +1498,9 @@ async function loadBundleBuffer(buffer, label, packId) {
       rebuildAndSolve();
     } else {
       // Fresh pack with no saved project: start clean — never carry the
-      // previous pack's pages into this bundle's state.
-      pages = [newPage('Page 1')];
-      activePage = 0;
+      // previous pack's projects into this bundle's state.
+      projects = [newProject('Project 1')];
+      activeProject = 0;
       bindActivePage();
       renderPageTabs();
       renderSolve({ status: 0, rows: [], links: [], flows: [] });
@@ -1421,14 +1538,16 @@ $('#switchBtn').onclick = () => {
   persist();
   localStorage.removeItem('mancos:lastPack');
   bundleKey = null;
-  pages = [newPage('Page 1')];
-  activePage = 0;
+  projects = [newProject('Project 1')];
+  activeProject = 0;
   bindActivePage();
   undoStack.length = 0;
   redoStack.length = 0;
-  lastPagesJson = null;
+  lastProjectsJson = null;
   lastSnapshot = null;
   milestones = [];
+  qualities = [];
+  prodTechOptions = null;
   favorites = new Set();
   for (const id of ['shareBtn', 'exportBtn', 'importBtn', 'switchBtn']) {
     document.getElementById(id).disabled = true;

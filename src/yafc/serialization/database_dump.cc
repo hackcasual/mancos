@@ -323,6 +323,7 @@ json DumpObject(const FactorioObject* o) {
     e["technologyUnlock"] = Refs(q->technologyUnlock);
     e["beaconConsumption"] = q->BeaconConsumptionFactor;
     e["upgradeChance"] = q->UpgradeChance;
+    e["chainProbability"] = q->ChainProbability;
   }
   return e;
 }
@@ -653,6 +654,12 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
       refs(e.at("technologyUnlock"), q->technologyUnlock);
       q->BeaconConsumptionFactor = e.at("beaconConsumption").get<float>();
       q->UpgradeChance = e.at("upgradeChance").get<float>();
+      // Bundles written before the Factorio 2.1 chain_probability split
+      // lack this field; 2.0's chaining rule (the tier's next_probability)
+      // is the right fallback for them. Bundles built from 2.1 data by the
+      // OLD bundler are unfixable here (they stored next_probability=1 and
+      // never saw chain_probability) — rebuild those with a current bundler.
+      q->ChainProbability = e.value("chainProbability", q->UpgradeChance);
     }
   }
 #undef REF

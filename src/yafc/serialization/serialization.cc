@@ -61,6 +61,15 @@ class JsonWriter {
     for (T* ref : refs) arr.push_back(ref->typeDotName());
     out_[name] = std::move(arr);
   }
+  // Upstream Dictionary<FactorioObject, V>: a JSON object keyed by
+  // typeDotName (e.g. productivityTechnologyLevels).
+  template <typename T, typename V>
+    requires std::derived_from<T, FactorioObject>
+  void Prop(const char* name, const std::map<T*, V>& map) {
+    nlohmann::json obj = nlohmann::json::object();
+    for (const auto& [ref, value] : map) obj[ref->typeDotName()] = value;
+    out_[name] = std::move(obj);
+  }
 
   template <typename T, typename VisitFn>
   void PropObject(const char* name, T& obj, VisitFn&& visit) {
@@ -158,6 +167,17 @@ class JsonReader {
     for (const auto& entry : *it) {
       if (!entry.is_string()) continue;
       if (T* ref = Resolve<T>(entry.get<std::string>())) refs.push_back(ref);
+    }
+  }
+  template <typename T, typename V>
+    requires std::derived_from<T, FactorioObject>
+  void Prop(const char* name, std::map<T*, V>& map) {
+    auto it = in_.find(name);
+    if (it == in_.end() || !it->is_object()) return;
+    map.clear();
+    for (const auto& [key, value] : it->items()) {
+      T* ref = Resolve<T>(key);
+      if (ref != nullptr && value.is_number()) map[ref] = value.get<V>();
     }
   }
 
@@ -364,6 +384,9 @@ template <typename V>
 void VisitSettings(ProjectSettings& settings, V& v) {
   v.Prop("milestones", settings.milestones);
   v.Prop("milestonesUnlocked", settings.milestonesUnlocked);
+  v.Prop("miningProductivity", settings.miningProductivity);
+  v.Prop("researchProductivity", settings.researchProductivity);
+  v.Prop("productivityTechnologyLevels", settings.productivityTechnologyLevels);
 }
 
 template <typename V>

@@ -181,6 +181,10 @@ Quality* ResolveQuality(const std::string& tdn) {
 json QualityBrief(const Quality* q) {
   if (q == nullptr) return nullptr;
   json brief{{"tdn", q->typeDotName()}, {"locName", q->locName}, {"level", q->level}};
+  if (q->nextQuality != nullptr) {
+    brief["next"] = q->nextQuality->typeDotName();
+    brief["upgradeChance"] = q->UpgradeChance;
+  }
   AddMilestoneInfo(brief, q);
   return brief;
 }
@@ -381,6 +385,63 @@ static std::string tableSetFiller(std::string request) {
   return json{{"ok", true}}.dump();
 }
 
+// Project-level production settings (upstream ProjectSettings): mining and
+// research productivity as fractions (0.1 = +10%), and per-technology
+// productivity research levels (Space Age's infinite "<recipe>-productivity"
+// researches, e.g. Low density structure productivity — critical for quality
+// recycling loops, where each level compounds through the recycle cycle).
+// Input: {"miningProductivity": f, "researchProductivity": f,
+//         "productivityLevels": {"Technology.x": level, ...}}.
+// Follows the tableSetFiller pattern: re-sent after every tableClear.
+static std::string tableSetSettings(std::string request) {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json parsed = json::parse(request, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) return Err("bad request");
+  ProductionSettings& settings = g_table->settings;
+  settings.miningProductivity = parsed.value("miningProductivity", 0.0f);
+  settings.researchProductivity = parsed.value("researchProductivity", 0.0f);
+  settings.productivityTechnologyLevels.clear();
+  if (const json& levels = parsed["productivityLevels"]; levels.is_object()) {
+    for (const auto& [tdn, level] : levels.items()) {
+      auto* tech = dynamic_cast<Technology*>(Db().FindByTypeDotName(tdn));
+      if (tech != nullptr && level.is_number() && level.get<int>() > 0) {
+        settings.productivityTechnologyLevels[tech] = level.get<int>();
+      }
+    }
+  }
+  return json{{"ok", true}}.dump();
+}
+
+// Technologies that grant per-recipe productivity per research level
+// (Technology::changeRecipeProductivity), for the project-settings UI.
+// Level-input candidates only — mining/research productivity are plain
+// percent fields, not tech-keyed.
+static std::string productivityOptions() {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json out = json::array();
+  for (const Technology* tech : Db().technologies) {
+    if (tech->changeRecipeProductivity.empty()) continue;
+    json recipes = json::array();
+    float bonus = 0;
+    for (const auto& [recipe, change] : tech->changeRecipeProductivity) {
+      recipes.push_back(json{{"tdn", recipe->typeDotName()},
+                             {"locName", recipe->locName},
+                             {"change", change}});
+      bonus = std::max(bonus, change);
+    }
+    json brief{{"tdn", tech->typeDotName()},
+               {"locName", tech->locName},
+               {"bonusPerLevel", bonus},
+               {"recipes", std::move(recipes)}};
+    AddMilestoneInfo(brief, tech);
+    out.push_back(std::move(brief));
+  }
+  std::sort(out.begin(), out.end(), [](const json& a, const json& b) {
+    return a["locName"].get<std::string>() < b["locName"].get<std::string>();
+  });
+  return out.dump();
+}
+
 // Favorites double as defaults (desktop: starred objects float to the top
 // and win the default pick). Input: {"favorites": [tdn...]}.
 static std::string setDefaults(std::string request) {
@@ -486,9 +547,11 @@ static std::string tableSolve() {
     // form as a product; power fuels stay off the chips (nameplate shows kW).
     json flows = json::array();
     for (const RecipeRow::DisplayFlow& f : row->DisplayFlows()) {
+      // Like links/flows below, "perMin" carries per-SECOND values (the JS
+      // layer scales to /min for display) — historical key name.
       flows.push_back(json{{"tdn", f.goods.target->typeDotName()},
                            {"quality", QualityBrief(f.goods.quality)},
-                           {"perMin", f.perSecond * 60}});
+                           {"perMin", f.perSecond}});
     }
     json entity;
     if (row->entity.target != nullptr) {
@@ -693,12 +756,34 @@ static std::string searchTechs(std::string query, int limit) {
 // Pages live in JS state; the C++ side converts between the .yafc Project
 // format and per-page UI mirrors. The solve workspace holds the active page.
 
-// pagesJson: [{name, goals:[{tdn,perMin}], linked:[tdn], rows:[{tdn}]}]
-static std::string projectSaveAll(std::string pagesJson) {
+// stateJson: {pages: [{name, goals:[{tdn,perMin}], linked:[tdn], rows:[{tdn}]}],
+//             settings: {miningProductivity, researchProductivity,
+//                        productivityLevels: {techTdn: level}}}
+// A bare array is also accepted (the pre-settings shape) for compatibility.
+static std::string projectSaveAll(std::string stateJson) {
   if (g_bundle == nullptr) return Err("no bundle loaded");
-  json pages = json::parse(pagesJson, nullptr, false);
-  if (pages.is_discarded() || !pages.is_array()) return Err("bad pages state");
+  json state = json::parse(stateJson, nullptr, false);
+  if (state.is_discarded()) return Err("bad pages state");
+  json pages, settingsJson = json::object();
+  if (state.is_array()) {
+    pages = std::move(state);
+  } else if (state.is_object() && state["pages"].is_array()) {
+    pages = std::move(state["pages"]);
+    if (state["settings"].is_object()) settingsJson = std::move(state["settings"]);
+  } else {
+    return Err("bad pages state");
+  }
   Project project;
+  project.settings.miningProductivity = settingsJson.value("miningProductivity", 0.0f);
+  project.settings.researchProductivity = settingsJson.value("researchProductivity", 0.0f);
+  if (const json& levels = settingsJson["productivityLevels"]; levels.is_object()) {
+    for (const auto& [tdn, level] : levels.items()) {
+      auto* tech = dynamic_cast<Technology*>(Db().FindByTypeDotName(tdn));
+      if (tech != nullptr && level.is_number() && level.get<int>() > 0) {
+        project.settings.productivityTechnologyLevels[tech] = level.get<int>();
+      }
+    }
+  }
   for (const json& p : pages) {
     auto page = std::make_unique<ProjectPage>();
     page->name = p.value("name", "Page");
@@ -839,7 +924,16 @@ static std::string projectLoad(std::string text) {
   }
   json errors = json::array();
   for (const std::string& error : loaded.errors) errors.push_back(error);
-  return json{{"pages", std::move(pages)}, {"errors", std::move(errors)}}.dump();
+  json productivityLevels = json::object();
+  for (const auto& [tech, level] : loaded.project->settings.productivityTechnologyLevels) {
+    productivityLevels[tech->typeDotName()] = level;
+  }
+  json settings{{"miningProductivity", loaded.project->settings.miningProductivity},
+                {"researchProductivity", loaded.project->settings.researchProductivity},
+                {"productivityLevels", std::move(productivityLevels)}};
+  return json{{"pages", std::move(pages)},
+              {"settings", std::move(settings)},
+              {"errors", std::move(errors)}}.dump();
 }
 
 static std::string iconLayers(std::string tdn) {
@@ -913,6 +1007,8 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableAddLink", &tableAddLink);
   emscripten::function("tableAddRecipe", &tableAddRecipe);
   emscripten::function("tableSetFiller", &tableSetFiller);
+  emscripten::function("tableSetSettings", &tableSetSettings);
+  emscripten::function("productivityOptions", &productivityOptions);
   emscripten::function("setDefaults", &setDefaults);
   emscripten::function("rowOptions", &rowOptions);
   emscripten::function("tableSolve", &tableSolve);

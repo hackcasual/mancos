@@ -30,6 +30,15 @@ Do not make changes to README.md, all text there is human authored
    (output demand) and "Inputs to consume" (negative/consume goals) sections.
 8. [x] (2026-07-04) Producing at quality (Factorio 2.0) — full solver threading: see
    Increment 12 below.
+9. [x] (2026-07-04) Individual projects + project settings — multiple named projects per
+   bundle, each with its own productivity research state (mining %, research %,
+   per-technology productivity levels — critical for quality recycling loops): see
+   Increment 13 below. Reference scenario: LDS recycling for higher-quality plastic.
+10. [ ] Blueprint auto-generation (sets of buildings with recipes placed) — building
+   footprints ARE already in the bundle: Entity width/height parsed from selection_box
+   (data_deserializer_entity.cc, upstream-parity tile rounding) and round-tripped by
+   database_dump.cc. Not yet exposed via the web API; add to entity briefs when this
+   feature starts.
 
 Goal: port [Yafc-CE](https://github.com/Yafc-CE/yafc-ce) (Factorio production calculator,
 C#/.NET 10 + SDL2 + Google OR-Tools + Lua 5.2.1) to run entirely client-side in a browser.
@@ -421,6 +430,42 @@ Recipe + status: `solver-wasm/README.md`.
    solve and show their badge, no console errors. Not yet done: MaxAccessible milestone-
    gating of the upgrade-chance walk; quality dimension on the `linked` (off-table link-
    only) list; fuel-quality picker (fuel defaults to Normal, unchanged from before).
+   Increment 13 (2026-07-04): individual projects + per-project settings (user directive:
+   quality recycling loops need per-project productivity research levels; "mining
+   productivity as well"; reference output: recycling LDS for higher-quality plastic).
+   FOUND AND FIXED a real quality-math bug while verifying against the hosted
+   factorio_2.1_SpaceAge_Quality bundle: **Factorio 2.1 changed the quality prototype
+   format** — module quality effects are now real fractions (0.025, was 10x-display 0.25
+   in 2.0), next_probability is 1.0 (was 0.1), and tier-to-tier chaining moved to a NEW
+   chain_probability field (0.1) on the reached tier. The 2.0-era math (multiply
+   next_probability all the way up — upstream yafc-ce's current model too) makes every
+   upgraded item chain straight to Legendary at 100% on 2.1 data. Fix: Quality gains
+   ChainProbability (parser: chain_probability, falling back to next_probability = the
+   2.0 chaining rule; dump format writes it, reader tolerates old bundles via
+   e.value() fallback), QualityDistribution multiplies UpgradeChance for the FIRST step
+   and the reached tier's ChainProbability for later steps — correct for both eras.
+   ***The hosted factorio_2.1_SpaceAge_Quality.yafcbundle (mancos-data) must be REBUILT
+   with the fixed bundler*** — it baked next_probability=1 with no chain info, so quality
+   spreads stay wrong on the old file (loads fine otherwise). Upstream yafc-ce likely has
+   the same 2.1 bug (worth an upstream report). Per-project settings: ProjectSettings
+   gains miningProductivity/researchProductivity/productivityTechnologyLevels (upstream
+   names, .yafc round-trip incl. dictionary-keyed-by-typeDotName serialization + test);
+   web API tableSetSettings (re-sent per rebuild like the filler) + productivityOptions
+   (techs with changeRecipeProductivity, milestone-gated briefs); projectSaveAll/Load
+   carry {pages, settings} (old bare-array shape still accepted). UI: app.js state is now
+   projects[{name, pages, activePage, settings}] with activeProject (localStorage
+   migration from both older shapes; history/share/export operate on the active project;
+   import replaces the active project only), project selector + rename/add/remove in the
+   Factory bar, "⚙ Settings" dialog (mining/research % + per-tech level inputs, icons +
+   lock badges, +N%/lv meta). Verified: LDS reference scenario on a locally-built vanilla
+   bundle — 60/min uncommon plastic goal with 4x quality-module-3 recyclers = 533.33
+   recycler crafts/min (exact analytic match: 1.25 plastic x 9% exactly-uncommon), LDS
+   productivity 3 drops the LDS crafting row 533->410 crafts/min and copper imports
+   8267->5805/min; per-project settings isolation confirmed in a CDP browser pass
+   (project 1 keeps 0/0 while project 2 holds mining 50% + LDS level 3); native+wasm
+   suites green. Also fixed en route: tableSolve row flows briefly emitted true
+   per-minute values under the "perMin" key (all other endpoints emit per-second under
+   that historical name; app.js scales) — reverted to per-second for consistency.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

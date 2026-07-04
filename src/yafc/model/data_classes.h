@@ -548,7 +548,15 @@ class Quality : public FactorioObject {
   int level = 0;
   std::vector<Technology*> technologyUnlock;
   float BeaconConsumptionFactor = 0;
+  // First-upgrade chance scale: prototype next_probability. Factorio 2.0
+  // pairs 0.1 here with 10x-display module effects (0.25 = "+2.5%"); 2.1
+  // pairs 1.0 with real-fraction effects (0.025) — both yield the same
+  // in-game first-step chance when multiplied by the module quality effect.
   float UpgradeChance = 0;
+  // Chance that an upgrade that reached THIS tier steps once more (2.1
+  // chain_probability). For 2.0 data (no such field) the parser mirrors
+  // next_probability here, which is 2.0's chaining rule.
+  float ChainProbability = 0;
 
   std::string_view type() const override { return "Quality"; }
   FactorioObjectSortOrder sortingOrder() const override {
