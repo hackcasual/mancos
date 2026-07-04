@@ -1423,6 +1423,7 @@ $('#bundleFile').onchange = async (e) => {
 // github.io serves with open CORS).
 const PACK_SOURCES = ['./', 'https://hackcasual.github.io/mancos-data/'];
 let packBase = './';
+let packNames = {};  // manifest id -> display name, for the header label
 
 async function initPacks() {
   let manifest = null;
@@ -1439,6 +1440,7 @@ async function initPacks() {
     } catch { /* try the next source */ }
   }
   if (!manifest?.packs?.length) return;
+  for (const p of manifest.packs) packNames[p.id] = p.name;
 
   // A shared link names the pack it was built with (human priority: opening
   // a link should never require guessing which pack to click) — it wins
@@ -1482,6 +1484,11 @@ async function loadBundleBuffer(buffer, label, packId) {
   if (info.error) { status(`load failed: ${info.error}`); return; }
   currentPackId = packId;
   if (packId) localStorage.setItem('mancos:lastPack', packId);
+  // Header label next to "Switch pack": manifest display name for hosted
+  // packs, the file name for locally loaded bundles.
+  const packLabel = (packId && packNames[packId]) || label || '';
+  $('#packName').textContent = packLabel;
+  $('#packName').title = packLabel;
   status(`${info.objects} objects · ${info.recipes} recipes · factorio ${info.meta.factorioVersion}`);
   bundleKey = 'mancos:' + JSON.stringify(info.meta.mods ?? label);
   // History is per-bundle: undoing into another pack's pages would resolve
@@ -1581,6 +1588,7 @@ $('#switchBtn').onclick = () => {
   updateUndoButtons();
   $('#workspace').hidden = true;
   $('#dropHint').hidden = false;
+  $('#packName').textContent = '';
   status('no bundle loaded — pick a pack');
 };
 
