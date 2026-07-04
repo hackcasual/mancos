@@ -357,6 +357,7 @@ async function rebuildAndSolve() {
     await rpc('tableAddRecipe', row.tdn, JSON.stringify({
       fixed: (row.fixed ?? 0) / 60,
       entity: row.entity ?? '',
+      entityQuality: row.entityQuality ?? '',
       fuel: row.fuel ?? '',
       modules: row.modules,
       quality: row.quality ?? '',
@@ -477,7 +478,7 @@ async function renderSolve(result) {
         `${fmt(f.perMin * 60)}</button>`))).join('');
     const entity = row.entity && row.entity.tdn ? `<button class="entity chip" data-config="${i}"` +
         ` title="${esc(row.entity.locName)} — click to change building, fuel, modules">` +
-        `${await iconImg(row.entity.tdn)}<span class="amt">×${fmt(row.buildings)}</span>` +
+        `${await iconImg(row.entity.tdn)}${await qualityBadge(row.entity.quality)}<span class="amt">×${fmt(row.buildings)}</span>` +
         `${row.entity.powerMw > 0 ? `<span class="muted amt">${fmt(row.entity.powerMw * row.buildings * 1000)}kW</span>` : ''}` +
         `</button>` :
         `<button class="cfg" data-config="${i}" title="Configure building, fuel, modules">⚙</button>`;
@@ -1027,6 +1028,7 @@ async function openRowConfig(i) {
     rowIndex: i,
     recipeTdn: row.tdn,
     entity: row.entity ?? '',
+    entityQuality: row.entityQuality ?? '',
     fuel: row.fuel ?? '',
     quality: row.quality ?? '',
     list: (modules.list ?? []).map((m) => ({ ...m })),
@@ -1130,20 +1132,30 @@ async function renderRowConfig() {
           optRow(m, 'add-beacon-module', false, specMeta(m))))).join('')
       : '';
 
-  // Quality tier this row's craft targets (upstream RecipeRow.recipe.quality):
-  // ingredients consume at this tier; products spread upward from it when
-  // quality modules are slotted. No favorites here — it's a per-row choice.
-  const qualityOpts = (await Promise.all(qualities.map(async (q) =>
-      `<button class="opt${(rowConfig.quality || qualities[0]?.tdn) === q.tdn ? ' sel' : ''}"
-         data-pick-quality="${q.tdn}">
+  // Two quality dimensions per row, both hidden when the loaded pack has no
+  // real quality tiers (hasSelectableQualities): "recipe quality" is the tier
+  // the craft targets (ingredients consume at it; products spread upward from
+  // it when quality modules are slotted); "building quality" scales the
+  // machine itself (+30% crafting speed per level, same power draw).
+  const qualityPicker = async (kind, selectedTdn) =>
+      (await Promise.all(qualities.map(async (q) =>
+      `<button class="opt${(selectedTdn || qualities[0]?.tdn) === q.tdn ? ' sel' : ''}"
+         data-${kind}="${q.tdn}">
          ${await iconImg(q.tdn)}<span>${esc(q.locName)}</span>
          <span class="meta">${q.inaccessible ? 'unreachable' : q.milestone ? 'locked' : ''}</span>
        </button>`))).join('');
+  const qualityOpts = await qualityPicker('pick-quality', rowConfig.quality);
+  const entityQualityOpts = await qualityPicker('pick-entity-quality', rowConfig.entityQuality);
 
   $('#rowDialogBody').innerHTML = `
     <div class="eyebrow">Building</div><div class="opts">${crafters}</div>
+    ${hasSelectableQualities() ? `
+      <div class="eyebrow" title="+30% crafting speed per level, unchanged power draw">Building quality</div>
+      <div class="opts">${entityQualityOpts}</div>` : ''}
     ${opts.hasEnergy && opts.fuels.length ? `<div class="eyebrow">Fuel</div><div class="opts">${fuels}</div>` : ''}
-    ${hasSelectableQualities() ? `<div class="eyebrow">Quality</div><div class="opts">${qualityOpts}</div>` : ''}
+    ${hasSelectableQualities() ? `
+      <div class="eyebrow" title="Ingredients are consumed at this tier; products start at it and upgrade from quality modules">Recipe quality</div>
+      <div class="opts">${qualityOpts}</div>` : ''}
     ${opts.moduleSlots > 0 || rowConfig.list.length ? `
       <div class="eyebrow">Modules — ${opts.moduleSlots} slots</div>
       ${rowConfig.list.length
@@ -1189,6 +1201,12 @@ async function renderRowConfig() {
   }
   for (const btn of body.querySelectorAll('[data-pick-quality]')) {
     btn.onclick = () => { rowConfig.quality = btn.dataset.pickQuality; renderRowConfig(); };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-entity-quality]')) {
+    btn.onclick = () => {
+      rowConfig.entityQuality = btn.dataset.pickEntityQuality;
+      renderRowConfig();
+    };
   }
   // Palette click appends an entry (first entry defaults to fill-remaining);
   // clicking a module already in the template bumps its fixed count instead.
@@ -1245,6 +1263,7 @@ $('#rowDialogApply').onclick = () => {
   const row = rows[rowConfig.rowIndex];
   if (row) {
     row.entity = rowConfig.entity || undefined;
+    row.entityQuality = rowConfig.entityQuality || undefined;
     row.fuel = rowConfig.fuel || undefined;
     row.quality = rowConfig.quality || undefined;
     const template = {

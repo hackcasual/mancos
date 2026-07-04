@@ -342,7 +342,11 @@ static std::string tableAddRecipe(std::string tdn, std::string configJson) {
   auto* entity = dynamic_cast<EntityCrafter*>(
       Db().FindByTypeDotName(config.value("entity", "")));
   if (entity == nullptr) entity = PickDefault(r->crafters);
-  if (entity != nullptr) row->entity = {entity, Db().qualityNormal};
+  // Building quality scales crafting speed +30%/level (Quality::
+  // ApplyStandardBonus via EntityCrafter::CraftingSpeed in RecipeParameters).
+  if (entity != nullptr) {
+    row->entity = {entity, ResolveQuality(config.value("entityQuality", ""))};
+  }
 
   auto* fuel = dynamic_cast<Goods*>(Db().FindByTypeDotName(config.value("fuel", "")));
   if (fuel == nullptr && entity != nullptr && entity->hasEnergy) {
@@ -566,6 +570,7 @@ static std::string tableSolve() {
       perBuildingMW *= row->parameters.activeEffects.energyUsageMod();
       entity = json{{"tdn", row->entity.target->typeDotName()},
                     {"locName", row->entity.target->locName},
+                    {"quality", QualityBrief(row->entity.quality)},
                     {"powerMw", perBuildingMW}};
     }
     json usedModules = json::array();
@@ -853,7 +858,7 @@ static std::string projectSaveAll(std::string stateJson) {
       }
       if (auto* entity = dynamic_cast<EntityCrafter*>(
               Db().FindByTypeDotName(row.value("entity", "")))) {
-        added->entity = {entity, Db().qualityNormal};
+        added->entity = {entity, ResolveQuality(row.value("entityQuality", ""))};
       }
       added->quality = ResolveQuality(row.value("quality", ""));
       if (row.contains("modules") && row["modules"].is_object()) {
@@ -920,6 +925,9 @@ static std::string projectLoad(std::string text) {
       if (row->fuel) rowJson["fuel"] = row->fuel.target->typeDotName();
       if (row->entity.target != nullptr) {
         rowJson["entity"] = row->entity.target->typeDotName();
+        if (row->entity.quality != nullptr && row->entity.quality != Db().qualityNormal) {
+          rowJson["entityQuality"] = row->entity.quality->typeDotName();
+        }
       }
       if (row->quality != nullptr && row->quality != Db().qualityNormal) {
         rowJson["quality"] = row->quality->typeDotName();
