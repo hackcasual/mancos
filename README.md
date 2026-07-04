@@ -5,6 +5,8 @@ Mancos is yet another yet another yet another factory planner for Factorio. It i
 ![Screenshot showing building out the space research data pack from Krastorio 2](docs/images/kras2.png)
 ![Screenshot showing fleshing out the simple circuit board build](docs/images/py-circ.png)
 
+App is live here: https://hackcasual.github.io/mancos/
+
 ## Features
 
 Mancos is entirely client side, and the main app is less than 2MBs of JS and WASM. The main app uses bundle files to keep recipe data for a mod set together. There are a few bundles provided, and you can use the bundler app to create your own. Currently this requires Chrome to provide directory access, or you can download a node.js app from `releases` to run the bundler locally.
