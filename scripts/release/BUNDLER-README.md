@@ -24,3 +24,11 @@ data derived from your game files, so share it only where that's appropriate.
 `env/` holds the bundler's Lua environment (from YAFC-CE, GPL-3.0); an
 explicit env-dir can be passed as a fourth argument before the output path.
 Licensed GPL-3.0 — see LICENSE and licenses.txt.
+
+## Updates
+
+Interactive runs check GitHub for a newer release and ask before
+downloading it over this install (never without asking; a declined or
+failed update just continues with the current version). Opt out with
+`--no-update-check` or `MANCOS_BUNDLER_NO_UPDATE=1`; non-interactive
+runs (CI, pipes) never check.
