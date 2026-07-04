@@ -6,6 +6,61 @@
 
 namespace yafc {
 
+namespace {
+
+// Upstream ProductionTableContent.BuildProducts's upgradeProbabilities: with
+// quality modules active, a craft at `base` quality has a shrinking chance to
+// land one tier higher, compounding up the quality chain. Returns "exactly
+// this tier" fractions of the recipe's base (Normal-quality) output amount,
+// paired with the quality each fraction lands at. Without quality modules
+// (qualityMod <= 0) the whole amount lands at `base` (a row can still target
+// a non-Normal floor with no modules — 100% at that exact tier, no spread).
+// Milestone-gating the top of this walk (upstream Quality.MaxAccessible) is
+// not ported yet: this walks the full quality chain the loaded data defines.
+std::vector<std::pair<Quality*, double>> QualityDistribution(Quality* base, double qualityMod) {
+  std::vector<double> probabilityAtLeast{1.0};
+  if (qualityMod > 0 && base != nullptr) {
+    double running = 1.0;
+    for (Quality* q = base; q->nextQuality != nullptr; q = q->nextQuality) {
+      running *= q->UpgradeChance;
+      probabilityAtLeast.push_back(std::min(1.0, running * qualityMod));
+    }
+    for (size_t j = 0; j + 1 < probabilityAtLeast.size(); ++j) {
+      probabilityAtLeast[j] -= probabilityAtLeast[j + 1];
+    }
+  }
+  std::vector<std::pair<Quality*, double>> out;
+  Quality* q = base;
+  for (double fraction : probabilityAtLeast) {
+    out.push_back({q, fraction});
+    if (q != nullptr) q = q->nextQuality;
+  }
+  return out;
+}
+
+// Per-product quality spread for one row: fluids/specials are Normal-only;
+// otherwise the upgrade-chance distribution starting at the row's target
+// quality. `qualityNormal`/`quality` are both nullptr for callers that never
+// wired ProductionSettings::qualityNormal — preserves the pre-quality-
+// threading behavior (single untagged-quality resolution) exactly.
+std::vector<std::pair<Quality*, double>> ProductQualitySpread(const Goods* goods,
+                                                              const RecipeParameters& params) {
+  if (!goods->AcceptsQuality() || params.quality == nullptr) {
+    return {{params.qualityNormal, 1.0}};
+  }
+  return QualityDistribution(params.quality, params.activeEffects.qualityMod());
+}
+
+// Ingredients don't spread across qualities — a row consumes one concrete
+// tier per ingredient (its target quality, or Normal if the goods can't
+// carry quality at all).
+Quality* IngredientQuality(const Goods* goods, const RecipeParameters& params) {
+  if (!goods->AcceptsQuality()) return params.qualityNormal;
+  return params.quality != nullptr ? params.quality : params.qualityNormal;
+}
+
+}  // namespace
+
 Goods* RecipeRow::ResolveIngredient(const Ingredient& ingredient) const {
   for (Goods* option : ingredient.variants) {
     if (std::find(variants.begin(), variants.end(), option) != variants.end()) {
@@ -20,6 +75,34 @@ bool RecipeRow::FindLink(const QualityGoods& goods, ProductionLink** link) const
   // resolves its links against the nested table first.
   const ProductionTable* root = subgroup != nullptr ? subgroup.get() : owner;
   return root != nullptr && root->FindLink(goods, link);
+}
+
+std::vector<RecipeRow::DisplayFlow> RecipeRow::DisplayFlows() const {
+  std::vector<DisplayFlow> out;
+  if (recipe == nullptr) return out;
+  for (const Product& product : recipe->products) {
+    double baseAmount = product.GetAmountPerRecipe(parameters.productivity()) * recipesPerSecond;
+    if (baseAmount <= 0) continue;
+    for (const auto& [quality, fraction] : ProductQualitySpread(product.goods, parameters)) {
+      double amount = baseAmount * fraction;
+      if (amount > 0) out.push_back({{product.goods, quality}, amount});
+    }
+  }
+  for (const Ingredient& ingredient : recipe->ingredients) {
+    Goods* goods = ResolveIngredient(ingredient);
+    Quality* quality = IngredientQuality(goods, parameters);
+    out.push_back({{goods, quality}, -ingredient.amount * recipesPerSecond});
+  }
+  if (fuel && !fuel.target->isPower()) {
+    double fuelFlow = parameters.fuelUsagePerSecondPerRecipe() * recipesPerSecond;
+    if (fuelFlow > 0) {
+      out.push_back({{fuel.target, fuel.quality}, -fuelFlow});
+      if (Item* spent = fuel.target->HasSpentFuel()) {
+        out.push_back({{spent, fuel.quality}, fuelFlow});
+      }
+    }
+  }
+  return out;
 }
 
 RecipeRow* ProductionTable::AddRecipe(RecipeOrTechnology* recipe) {
@@ -126,10 +209,9 @@ TableSolveResult ProductionTable::Solve() {
                       .goods_cost = link.goodsCost};
   }
 
-  // Quality is not threaded through recipes yet: links resolve on plain goods.
-  auto resolve = [&](const RecipeRow* row, Goods* goods) {
+  auto resolve = [&](const RecipeRow* row, Goods* goods, Quality* quality) {
     ProductionLink* link = nullptr;
-    if (goods != nullptr) row->FindLink({goods, nullptr}, &link);
+    if (goods != nullptr) row->FindLink({goods, quality}, &link);
     return link != nullptr ? linkIndex[link] : -1;
   };
 
@@ -145,13 +227,18 @@ TableSolveResult ProductionTable::Solve() {
       sr.fixed_rps = row->fixedBuildings / row->parameters.recipeTime;
     }
     for (const Product& product : row->recipe->products) {
-      double amount = product.GetAmountPerRecipe(row->parameters.productivity());
-      if (amount <= 0) continue;
-      sr.products.push_back({resolve(row, product.goods), amount});
+      double baseAmount = product.GetAmountPerRecipe(row->parameters.productivity());
+      if (baseAmount <= 0) continue;
+      for (const auto& [quality, fraction] : ProductQualitySpread(product.goods, row->parameters)) {
+        double amount = baseAmount * fraction;
+        if (amount <= 0) continue;
+        sr.products.push_back({resolve(row, product.goods, quality), amount});
+      }
     }
     for (const Ingredient& ingredient : row->recipe->ingredients) {
-      sr.ingredients.push_back(
-          {resolve(row, row->ResolveIngredient(ingredient)), ingredient.amount});
+      Goods* goods = row->ResolveIngredient(ingredient);
+      Quality* quality = IngredientQuality(goods, row->parameters);
+      sr.ingredients.push_back({resolve(row, goods, quality), ingredient.amount});
     }
     if (row->fuel) {
       ProductionLink* link = nullptr;
@@ -160,9 +247,10 @@ TableSolveResult ProductionTable::Solve() {
       sr.ingredients.push_back({link != nullptr ? linkIndex[link] : -1,
                                 fuelPerRecipe});
       // Burning fuel yields its spent form 1:1 (upstream HasSpentFuel), e.g.
-      // fuel cells -> used-up cells; closes nuclear reprocessing loops.
+      // fuel cells -> used-up cells; closes nuclear reprocessing loops. The
+      // spent item keeps the fuel's own quality tier (upstream FuelResult).
       if (Item* spent = row->fuel.target->HasSpentFuel(); spent && fuelPerRecipe > 0) {
-        sr.products.push_back({resolve(row, spent), fuelPerRecipe});
+        sr.products.push_back({resolve(row, spent, row->fuel.quality), fuelPerRecipe});
       }
     }
   }
@@ -186,16 +274,25 @@ TableSolveResult ProductionTable::Solve() {
 
 namespace {
 
-// Upstream AddFlow: per-goods production/consumption sums for one row.
+// Upstream AddFlow: per-(goods,quality) production/consumption sums for one
+// row, at its solved rate — same productivity + quality-spread math as
+// Solve()'s LP inputs (see QualityDistribution/ProductQualitySpread above).
 void AddFlow(const RecipeRow& row,
              std::map<std::pair<Goods*, Quality*>, std::pair<double, double>>& summer) {
   for (const Product& product : row.recipe->products) {
-    auto& [prod, cons] = summer[{product.goods, nullptr}];
-    prod += product.GetAmountPerRecipe(row.parameters.productivity()) * row.recipesPerSecond;
+    double baseAmount =
+        product.GetAmountPerRecipe(row.parameters.productivity()) * row.recipesPerSecond;
+    if (baseAmount <= 0) continue;
+    for (const auto& [quality, fraction] : ProductQualitySpread(product.goods, row.parameters)) {
+      double amount = baseAmount * fraction;
+      if (amount <= 0) continue;
+      summer[{product.goods, quality}].first += amount;
+    }
   }
   for (const Ingredient& ingredient : row.recipe->ingredients) {
-    auto& [prod, cons] = summer[{row.ResolveIngredient(ingredient), nullptr}];
-    cons += ingredient.amount * row.recipesPerSecond;
+    Goods* goods = row.ResolveIngredient(ingredient);
+    Quality* quality = IngredientQuality(goods, row.parameters);
+    summer[{goods, quality}].second += ingredient.amount * row.recipesPerSecond;
   }
   if (row.fuel) {
     double fuelFlow = row.parameters.fuelUsagePerSecondPerRecipe() * row.recipesPerSecond;

@@ -134,6 +134,10 @@ class Goods : public FactorioObject {
   virtual UnitOfMeasure flowUnitOfMeasure() const = 0;
   Fluid* fluid();  // this as Fluid, or nullptr
   virtual Item* HasSpentFuel() { return nullptr; }  // returns spent item or null
+  // Only Items (incl. Modules) carry a quality tier; Fluids/Special goods
+  // always resolve to Normal (upstream QualityExtensions.With's auto-
+  // downgrade for quality-incapable types).
+  bool AcceptsQuality() const;
 };
 
 class Item : public Goods {

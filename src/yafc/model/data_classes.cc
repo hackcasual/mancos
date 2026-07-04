@@ -7,6 +7,8 @@ namespace yafc {
 
 Fluid* Goods::fluid() { return dynamic_cast<Fluid*>(this); }
 
+bool Goods::AcceptsQuality() const { return dynamic_cast<const Item*>(this) != nullptr; }
+
 float Item::GetSpoilTime(const Quality& quality) const {
   return quality.ApplyStandardBonus(baseSpoilTime);
 }

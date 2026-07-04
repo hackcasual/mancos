@@ -109,6 +109,15 @@ async function iconImg(tdn) {
   }
 }
 
+// Small icon badge for a quality brief ({tdn, locName, level, ...} or null/
+// undefined). Normal (level 0) renders nothing — the overwhelming default
+// case should look identical to a table with no quality tiers in use.
+async function qualityBadge(quality) {
+  if (!quality || quality.level === 0) return '';
+  return `<span class="quality-badge" title="${esc(quality.locName)}">${await iconImg(quality.tdn)}</span>`;
+}
+const qualityByTdn = (tdn) => qualities.find((q) => q.tdn === tdn);
+
 // ---- table state: pages of {name, goals, linked, rows}; the active page's
 // fields are aliased into goals/linked/rows for the render/solve paths ----
 let pages = [newPage('Page 1')];
@@ -278,9 +287,9 @@ async function rebuildAndSolve() {
   if (filler) await rpc('tableSetFiller', JSON.stringify(filler));
   // Table units are per SECOND (desktop yafc compatible); UI shows /min.
   for (const goal of goals) {
-    await rpc('tableAddLink', goal.tdn, goal.perMin / 60, linkAlgoOf(goal.tdn));
+    await rpc('tableAddLink', goal.tdn, goal.perMin / 60, linkAlgoOf(goal.tdn), goal.quality ?? '');
   }
-  for (const tdn of linked) await rpc('tableAddLink', tdn, 0, linkAlgoOf(tdn));
+  for (const tdn of linked) await rpc('tableAddLink', tdn, 0, linkAlgoOf(tdn), '');
   // Rows carry per-project choices ('' / missing = favorite-or-first
   // defaults): a reactor burning mox vs uranium cells is a different chain.
   for (const row of rows) {
@@ -289,9 +298,38 @@ async function rebuildAndSolve() {
       entity: row.entity ?? '',
       fuel: row.fuel ?? '',
       modules: row.modules,
+      quality: row.quality ?? '',
     }));
   }
   renderSolve(await rpc('tableSolve'));
+}
+
+// ---- amount dialog: shared numeric entry for demand + pinned rate (native
+// prompt() doesn't reliably appear in installed/standalone-mode PWAs on
+// mobile, so both flows go through this in-page dialog instead).
+function openAmountDialog({ title, hint, value, clearLabel, onApply, onClear, quality }) {
+  $('#amountTitle').textContent = title;
+  $('#amountHint').textContent = hint ?? '';
+  const input = $('#amountInput');
+  input.value = value ?? '';
+  const clearBtn = $('#amountClear');
+  clearBtn.hidden = !onClear;
+  clearBtn.textContent = clearLabel ?? 'Clear';
+  const qualityRow = $('#amountQualityRow');
+  const qualitySelect = $('#amountQuality');
+  qualityRow.hidden = !quality;
+  if (quality) qualitySelect.innerHTML = qualitySelectHtml(quality.selected);
+  const submit = () => {
+    const qualityTdn = quality ? qualitySelect.value : undefined;
+    if (onApply(parseFloat(input.value), input.value, qualityTdn)) $('#amountDialog').close();
+  };
+  $('#amountApply').onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+  clearBtn.onclick = () => { onClear(); $('#amountDialog').close(); };
+  $('#amountCancel').onclick = () => $('#amountDialog').close();
+  $('#amountDialog').showModal();
+  input.focus();
+  input.select();
 }
 
 const cost = (c) => c > 0 ? `<span class="muted mono">\u00a4${c >= 100 ? c.toFixed(0) : c.toFixed(1)}</span>` : '';
@@ -327,21 +365,43 @@ async function renderSolve(result) {
   status(`${statusNames[result.status] ?? '?'} · ${rows.length} rows · ` +
          `${goals.length + linked.length} links`);
 
-  // Goals: amber pills, click amount to edit, x to remove.
-  $('#goals').innerHTML = goals.map((g, i) =>
-      `<span class="pill goal${g.perMin < 0 ? ' input' : ''}">` +
-      `<button class="chip" data-goods="${g.tdn}">${esc(g.name)}</button>
-         <button class="small ghost amt" data-goal="${i}" title="Edit demand">${g.perMin}/min</button>
-         <button class="x" data-goal-x="${i}" aria-label="Remove goal">✕</button></span>`)
-      .join('') ||
-      '<span class="muted">No demand set — search a goods, then “Set demand”.</span>';
+  // Goals: amber pills, click amount to edit, x to remove. Main products
+  // (output demand) get their own section, separate from input goals
+  // (negative perMin — "consume this much").
+  const goalPill = async (g) => {
+    const i = goals.indexOf(g);
+    return `<span class="pill goal${g.perMin < 0 ? ' input' : ''}">` +
+        `<button class="chip" data-goods="${g.tdn}">${esc(g.name)}${await qualityBadge(qualityByTdn(g.quality))}</button>
+           <button class="small ghost amt" data-goal="${i}" title="Edit demand">${g.perMin}/min</button>
+           <button class="x" data-goal-x="${i}" aria-label="Remove goal">✕</button></span>`;
+  };
+  if (goals.length === 0) {
+    $('#goals').innerHTML = '<span class="muted">No demand set — search a goods, then “Set demand”.</span>';
+  } else {
+    const outputs = goals.filter((g) => g.perMin >= 0);
+    const inputs = goals.filter((g) => g.perMin < 0);
+    const outputsHtml = (await Promise.all(outputs.map(goalPill))).join('');
+    const inputsHtml = (await Promise.all(inputs.map(goalPill))).join('');
+    $('#goals').innerHTML =
+        (outputs.length ? `<div class="eyebrow" style="margin:0 0 4px">Main products</div>${outputsHtml}` : '') +
+        (inputs.length ? `<div class="eyebrow" style="margin:10px 0 4px">Inputs to consume</div>${inputsHtml}` : '');
+  }
   for (const btn of $('#goals').querySelectorAll('[data-goal]')) {
     btn.onclick = () => {
       const goal = goals[+btn.dataset.goal];
-      const perMin = parseFloat(prompt(
-          `Demand for ${goal.name} in units/min\n(negative = input goal: consume this much)`,
-          goal.perMin));
-      if (Number.isFinite(perMin) && perMin !== 0) { goal.perMin = perMin; rebuildAndSolve(); }
+      openAmountDialog({
+        title: `Demand for ${goal.name}`,
+        hint: 'Units per minute — negative = input goal: consume this much.',
+        value: goal.perMin,
+        quality: hasSelectableQualities() ? { selected: goal.quality } : undefined,
+        onApply: (perMin, raw, qualityTdn) => {
+          if (!Number.isFinite(perMin) || perMin === 0) return false;
+          goal.perMin = perMin;
+          goal.quality = qualityTdn;
+          rebuildAndSolve();
+          return true;
+        },
+      });
     };
   }
   for (const btn of $('#goals').querySelectorAll('[data-goal-x]')) {
@@ -352,7 +412,7 @@ async function renderSolve(result) {
   const plates = await Promise.all(result.rows.map(async (row, i) => {
     const flows = (await Promise.all(row.flows.map(async (f) =>
         `<button class="flow chip ${f.perMin >= 0 ? 'pos' : 'neg'}" data-goods="${f.tdn}"` +
-        ` title="${esc(f.tdn)}">${await iconImg(f.tdn)}` +
+        ` title="${esc(f.tdn)}">${await iconImg(f.tdn)}${await qualityBadge(f.quality)}` +
         `${fmt(f.perMin * 60)}</button>`))).join('');
     const entity = row.entity && row.entity.tdn ? `<button class="entity chip" data-config="${i}"` +
         ` title="${esc(row.entity.locName)} — click to change building, fuel, modules">` +
@@ -368,7 +428,7 @@ async function renderSolve(result) {
           `${await iconImg(row.beacon.tdn)}<small>${row.beacon.count}</small></span>` : '';
     return `<div class="plate${row.warnings & WARN_ALARM ? ' warn' : ''}">
       <div class="head">${await iconImg(row.recipe.tdn)}
-        <span class="name" title="${esc(row.recipe.tdn)}">${esc(row.recipe.locName)}</span>
+        <span class="name" title="${esc(row.recipe.tdn)}">${esc(row.recipe.locName)}${await qualityBadge(row.quality)}</span>
         ${entity}
         ${mods || beacon ? `<span class="mods">${mods}${beacon}</span>` : ''}
         ${row.warnings ? `<span title="${esc(warningText(row.warnings))}">⚠</span>` : ''}
@@ -390,13 +450,20 @@ async function renderSolve(result) {
   for (const btn of $('#rows').querySelectorAll('[data-pin]')) {
     btn.onclick = () => {
       const row = rows[+btn.dataset.pin];
-      const current = row.fixed ? String(row.fixed) : '';
-      const answer = prompt('Pin rate in crafts/min (empty to unpin):', current);
-      if (answer === null) return;
-      const value = parseFloat(answer);
-      if (answer.trim() === '' || !Number.isFinite(value) || value <= 0) delete row.fixed;
-      else row.fixed = value;
-      rebuildAndSolve();
+      openAmountDialog({
+        title: 'Pin crafting rate',
+        hint: 'Crafts per minute. Clear the field to let the solver choose the rate.',
+        value: row.fixed ? String(row.fixed) : '',
+        clearLabel: 'Unpin',
+        onClear: row.fixed ? () => { delete row.fixed; rebuildAndSolve(); } : undefined,
+        onApply: (value, raw) => {
+          if (raw.trim() === '') { delete row.fixed; rebuildAndSolve(); return true; }
+          if (!Number.isFinite(value) || value <= 0) return false;
+          row.fixed = value;
+          rebuildAndSolve();
+          return true;
+        },
+      });
     };
   }
 
@@ -408,17 +475,17 @@ async function renderSolve(result) {
     { symbol: '≥', label: 'Over-production allowed — click to allow over-consumption' },
     { symbol: '≤', label: 'Over-consumption allowed — click for exact match' },
   ];
-  const linkPills = result.links.map((l) => {
+  const linkPills = await Promise.all(result.links.map(async (l) => {
     const isGoal = goals.some((g) => g.tdn === l.tdn);
     const bad = (l.flags & 1) !== 0;
     const algo = l.algo ?? 0;
     const unlink = isGoal ? '' :
         `<button class="x" data-unlink="${l.tdn}" aria-label="Unlink">✕</button>`;
     return `<span class="pill${bad ? ' bad' : ''}${algo ? ' loose' : ''}" title="${bad ? 'unmatched — needs both a producer and a consumer in-table' : 'matched'}">
-        <button class="chip" data-goods="${l.tdn}">${esc(l.name)}</button>
+        <button class="chip" data-goods="${l.tdn}">${esc(l.name)}${await qualityBadge(l.quality)}</button>
         <button class="small ghost algo" data-algo="${l.tdn}" title="${ALGO[algo].label}">${ALGO[algo].symbol}</button>
         <span class="amt">${fmt(l.flow * 60)}/min</span>${unlink}</span>`;
-  });
+  }));
   $('#links').innerHTML = linkPills.join('') || '<span class="muted">—</span>';
   for (const btn of $('#links').querySelectorAll('[data-unlink]')) {
     btn.onclick = () => {
@@ -435,17 +502,24 @@ async function renderSolve(result) {
     };
   }
 
-  // Off-table flows with candidate auto-pull.
+  // Off-table flows with candidate auto-pull. Pull/link-only only target
+  // Normal quality for now (the "linked" list has no quality dimension yet);
+  // a non-Normal surplus/import still shows, just without those actions.
   const flowRows = await Promise.all(result.flows
       .filter((f) => Math.abs(f.perMin) > 1e-9)
       .sort((a, b) => a.perMin - b.perMin)
-      .map(async (f) =>
-      `<div class="row">${await iconImg(f.tdn)}` +
-      `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin * 60)}/min</span>` +
-      `<button class="chip" data-goods="${f.tdn}">${esc(f.name)}</button>` +
-      `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}">` +
-      `${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
-      `<button class="small ghost" data-link="${f.tdn}">link only</button></div>`));
+      .map(async (f) => {
+        const actionable = !f.quality || f.quality.level === 0;
+        return `<div class="row">${await iconImg(f.tdn)}` +
+        `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin * 60)}/min</span>` +
+        `<button class="chip" data-goods="${f.tdn}">${esc(f.name)}${await qualityBadge(f.quality)}</button>` +
+        (actionable
+            ? `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}">` +
+              `${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
+              `<button class="small ghost" data-link="${f.tdn}">link only</button>`
+            : `<span class="muted" style="font-size:12px">set a demand to link this quality</span>`) +
+        `</div>`;
+      }));
   $('#flows').innerHTML = flowRows.join('') || '<span class="muted">—</span>';
   for (const btn of $('#flows').querySelectorAll('[data-link]')) {
     btn.onclick = () => { linked.push(btn.dataset.link); rebuildAndSolve(); };
@@ -554,14 +628,23 @@ async function showGoods(tdn) {
   await renderRecipeList(`Producers (${info.producers.length})`, info.producers,
       `<div class="eyebrow">${esc(info.goods.locName)}</div>
        <button id="goalBtn">Set demand…</button>`);
+  // Fluids/Special goods never carry a quality tier (Factorio 2.0 rule), and
+  // some packs disable the quality feature entirely (see hasSelectableQualities).
+  const goodsAcceptsQuality = info.goods.kind !== 'Fluid' && info.goods.kind !== 'Special' &&
+      hasSelectableQualities();
   $('#goalBtn').onclick = () => {
-    const perMin = parseFloat(prompt(
-        `Demand for ${info.goods.locName} in units/min\n(negative = input goal: consume this much)`,
-        '900'));
-    if (Number.isFinite(perMin) && perMin !== 0) {
-      goals.push({ tdn, name: info.goods.locName, perMin });
-      rebuildAndSolve();
-    }
+    openAmountDialog({
+      title: `Demand for ${info.goods.locName}`,
+      hint: 'Units per minute — negative = input goal: consume this much.',
+      value: 900,
+      quality: goodsAcceptsQuality ? { selected: undefined } : undefined,
+      onApply: (perMin, raw, qualityTdn) => {
+        if (!Number.isFinite(perMin) || perMin === 0) return false;
+        goals.push({ tdn, name: info.goods.locName, perMin, quality: qualityTdn });
+        rebuildAndSolve();
+        return true;
+      },
+    });
   };
 }
 
@@ -599,7 +682,7 @@ async function applyLoadedProject(state) {
   if (state.error) { status(`project load failed: ${state.error}`); return; }
   pages = state.pages.map((p, i) => ({
     name: p.name || `Page ${i + 1}`,
-    goals: p.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin })),
+    goals: p.goals.map((g) => ({ tdn: g.tdn, name: g.name, perMin: g.perMin, quality: g.quality })),
     linked: p.linked,
     rows: p.rows,          // rows keep entity/fuel/modules mirrors verbatim
     filler: p.filler,      // page-level module defaults, if any
@@ -871,6 +954,7 @@ async function openRowConfig(i) {
     recipeTdn: row.tdn,
     entity: row.entity ?? '',
     fuel: row.fuel ?? '',
+    quality: row.quality ?? '',
     list: (modules.list ?? []).map((m) => ({ ...m })),
     beacon: modules.beacon ?? '',
     beaconList: (modules.beaconList ?? []).map((m) => ({ ...m })),
@@ -972,9 +1056,20 @@ async function renderRowConfig() {
           optRow(m, 'add-beacon-module', false, specMeta(m))))).join('')
       : '';
 
+  // Quality tier this row's craft targets (upstream RecipeRow.recipe.quality):
+  // ingredients consume at this tier; products spread upward from it when
+  // quality modules are slotted. No favorites here — it's a per-row choice.
+  const qualityOpts = (await Promise.all(qualities.map(async (q) =>
+      `<button class="opt${(rowConfig.quality || qualities[0]?.tdn) === q.tdn ? ' sel' : ''}"
+         data-pick-quality="${q.tdn}">
+         ${await iconImg(q.tdn)}<span>${esc(q.locName)}</span>
+         <span class="meta">${q.inaccessible ? 'unreachable' : q.milestone ? 'locked' : ''}</span>
+       </button>`))).join('');
+
   $('#rowDialogBody').innerHTML = `
     <div class="eyebrow">Building</div><div class="opts">${crafters}</div>
     ${opts.hasEnergy && opts.fuels.length ? `<div class="eyebrow">Fuel</div><div class="opts">${fuels}</div>` : ''}
+    ${hasSelectableQualities() ? `<div class="eyebrow">Quality</div><div class="opts">${qualityOpts}</div>` : ''}
     ${opts.moduleSlots > 0 || rowConfig.list.length ? `
       <div class="eyebrow">Modules — ${opts.moduleSlots} slots</div>
       ${rowConfig.list.length
@@ -1017,6 +1112,9 @@ async function renderRowConfig() {
   }
   for (const btn of body.querySelectorAll('[data-pick-fuel]')) {
     btn.onclick = () => { rowConfig.fuel = btn.dataset.pickFuel; renderRowConfig(); };
+  }
+  for (const btn of body.querySelectorAll('[data-pick-quality]')) {
+    btn.onclick = () => { rowConfig.quality = btn.dataset.pickQuality; renderRowConfig(); };
   }
   // Palette click appends an entry (first entry defaults to fill-remaining);
   // clicking a module already in the template bumps its fixed count instead.
@@ -1074,6 +1172,7 @@ $('#rowDialogApply').onclick = () => {
   if (row) {
     row.entity = rowConfig.entity || undefined;
     row.fuel = rowConfig.fuel || undefined;
+    row.quality = rowConfig.quality || undefined;
     const template = {
       list: rowConfig.list,
       beacon: rowConfig.beacon || undefined,
@@ -1088,6 +1187,28 @@ $('#rowDialogApply').onclick = () => {
 $('#rowDialogCancel').onclick = () => $('#rowDialog').close();
 
 // ---- milestones (desktop "Milestones" dialog) ----
+// ---- quality tiers (Normal/Uncommon/Rare/.../Legendary in vanilla) ----
+// [{tdn, locName, level, inaccessible?, milestone?}], level-ordered; fetched
+// once per bundle and re-fetched when the milestone set changes (gating is
+// milestone-based, same as recipes/goods).
+let qualities = [];
+const qualityLocked = (q) => q.inaccessible ? ' \u{1F6AB}' : q.milestone ? ' \u{1F512}' : '';
+// Some packs disable the quality feature entirely at the game-data level
+// (a common overhaul-mod choice) — the loaded Database then only carries
+// Normal plus Factorio's internal "quality-unknown" sentinel (itself always
+// inaccessible, never a real player-facing tier). Gate the whole feature's
+// UI on there being at least one REAL, reachable non-Normal tier, so those
+// packs don't show a picker whose only alternative is a dead-end sentinel.
+const hasSelectableQualities = () => qualities.some((q) => q.level > 0 && !q.inaccessible);
+async function refreshQualities() {
+  qualities = await rpc('qualityList');
+}
+function qualitySelectHtml(selectedTdn) {
+  return qualities.map((q) =>
+      `<option value="${q.tdn}" ${q.tdn === selectedTdn ? 'selected' : ''}>` +
+      `${esc(q.locName)}${qualityLocked(q)}</option>`).join('');
+}
+
 let milestones = [];  // [{tdn, locName, unlocked}] in discovery order
 
 async function pushMilestones() {
@@ -1150,6 +1271,7 @@ $('#milestonesDialog').onclose = () => {
   // Lock badges in the open search list may be stale now.
   const search = $('#search');
   if (search.value.trim().length >= 2) search.oninput({ target: search });
+  refreshQualities();
 };
 
 // ---- bundle loading ----
@@ -1285,6 +1407,10 @@ async function loadBundleBuffer(buffer, label, packId) {
     renderMilestonesSummary();
     if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
   }
+  // After milestones (shared-link or local-restore path above already ran
+  // EnsureMilestones in the worker) so this doesn't trigger the accessibility
+  // walk any earlier than the existing deferred-milestones ordering intends.
+  await refreshQualities();
 }
 
 // ---- switch pack: close the current project, back to the chooser ----

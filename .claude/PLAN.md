@@ -23,6 +23,13 @@ Do not make changes to README.md, all text there is human authored
    existing technologyUnlock ∩ researched check.
 5. [x] (2026-07-03) Mobile phone mode — single-column layout optimized for building a table:
    catalog as a bottom sheet, large touch targets, collapsible flows/links sections.
+6. [x] (2026-07-04) Mobile-safe demand/pin entry — native prompt() doesn't reliably appear in
+   installed/standalone-mode PWAs; replaced with a shared in-page amount dialog for both
+   "Set demand" and "Pin rate".
+7. [x] (2026-07-04) Main-products separator — Goals strip splits into "Main products"
+   (output demand) and "Inputs to consume" (negative/consume goals) sections.
+8. [x] (2026-07-04) Producing at quality (Factorio 2.0) — full solver threading: see
+   Increment 12 below.
 
 Goal: port [Yafc-CE](https://github.com/Yafc-CE/yafc-ce) (Factorio production calculator,
 C#/.NET 10 + SDL2 + Google OR-Tools + Lua 5.2.1) to run entirely client-side in a browser.
@@ -355,6 +362,65 @@ Recipe + status: `solver-wasm/README.md`.
    mechanism is API-complete but nothing in the row-config dialog exposes it yet) and no
    equivalent variant selection for fuel temperature (row.fuel is chosen directly from
    entity->energy.fuels, a different mechanism, out of scope for this fix).
+   Increment 12 (2026-07-04): mobile UX fixes (user directive) + full quality (Factorio 2.0)
+   threading (user directive: "producing at quality"). Mobile: native `prompt()` doesn't
+   reliably appear in installed/standalone-mode PWAs (the likely cause of the reported
+   "can't set a demand on mobile" bug) — replaced with a shared `#amountDialog` (number
+   input + optional quality `<select>`) used by both "Set demand" and "Pin rate", with a
+   dedicated Unpin action; Goals strip splits into "Main products" / "Inputs to consume"
+   sections. Quality: previously only entity/building quality existed (`ObjectWithQuality<
+   EntityCrafter>`, always Normal from the web layer); `QualityGoods`/links were wired for
+   it but products/ingredients always resolved at `nullptr` ("no quality dimension (yet)").
+   Ported upstream's `BuildProducts` upgrade-chance math (`ProductionTableContent.cs`):
+   `RecipeRow` gains a target/floor `quality` (nullptr = unset, resolved to
+   `ProductionSettings::qualityNormal` — a new caller-injected field, since the model core
+   has no Database back-reference — by `RecipeParameters::Calculate`, so untouched callers
+   see zero behavior change). Ingredients consume at that resolved quality (forced to
+   Normal for goods that don't accept it — new `Goods::AcceptsQuality()`, Item-only, out-
+   of-line for the forward-declaration); products spread across quality tiers via
+   `Quality::UpgradeChance` compounding + the module `Quality` effect
+   (`ModuleEffects::qualityMod()`, already computed, just never consumed before), shared
+   by `Solve()` (LP inputs), `AddFlow` (flow reporting) and a new `RecipeRow::DisplayFlows()`
+   (also fixes a latent bug: the web layer's per-row nameplate flows were recomputed
+   straight from `recipe->products` and ignored productivity entirely). Milestone-gating
+   the top of the quality chain (upstream `Quality.MaxAccessible`) is NOT ported — the
+   walk uses every quality tier the loaded data defines, not just currently-reachable ones;
+   a real gap but low-impact (over-inclusive, not incorrect) and flagged for a follow-up.
+   Serialization: quality-wrapped refs (desktop `"!target!quality"`, quality by bare
+   `name` not typeDotName) for `QualityGoods`/`ObjectWithQuality<T>` in both directions;
+   `RecipeRow.recipe`'s "recipe" property is bridged through a temporary `ObjectWithQuality
+   <RecipeOrTechnology>` so upstream's actual shape (recipe+quality as one wrapped ref) is
+   preserved without changing this port's separate recipe/quality fields; an unresolvable
+   quality name degrades leniently (nullptr, i.e. Normal) rather than a load error. Web API:
+   `qualityList()` (level-ordered, milestone-gated like recipes/goods) alongside
+   `tableAddLink`'s new required qualityTdn arg, `tableAddRecipe`'s config `"quality"`,
+   `tableSolve`'s row/flow/link quality briefs, `projectSaveAll`/`projectLoad` quality
+   round-trip for goals+rows; goods that can't accept quality are clamped to Normal
+   server-side (not just client-gated) so a mismatched/dead link can't be created. UI:
+   quality `<select>` in the amount dialog (goal-only, hidden for Fluid/Special goods and
+   whenever the loaded pack has no real non-Normal tier — see below), a quality button
+   row in the row-config dialog (no favorites, unlike building/fuel), small icon badges
+   (reusing `iconImg` — Quality objects get bundler-extracted icons like any other
+   FactorioObject) on goal pills/plate names/flow chips/link pills, omitted entirely at
+   Normal to keep the common case unchanged. Off-table "produce/consume/link only" actions
+   stay Normal-only for now (the `linked` list has no quality dimension) — a non-Normal
+   surplus/import still displays (with its badge) but isn't actionable from that panel;
+   flagged as a follow-up alongside MaxAccessible gating. Discovered mid-session: Pyanodon's
+   Alien Life (the only previously-available local bundle) disables the quality feature
+   entirely at the game-data level (common for overhaul packs) — the Database then only
+   carries Normal + Factorio's internal always-inaccessible "quality-unknown" sentinel;
+   added `hasSelectableQualities()` gating so the picker/section don't appear at all in
+   that case instead of offering a dead-end option. Verified: 2 new production-table tests
+   (module-upgrade-chance spread across 3 synthetic tiers incl. `DisplayFlows` parity; a
+   fixed non-Normal floor with no modules produces 100% at that exact tier) + 1
+   serialization round-trip test, native + wasm/node suites green throughout. Built a local
+   vanilla bundle (`mancos_bundler <data> vanilla <env> out.yafcbundle`, real Uncommon/
+   Rare/Epic/Legendary tiers with correct milestone gating) since the checked-in bundle
+   has quality disabled; CDP-driven headless-Chromium pass against it: quality picker
+   renders in both dialogs, a non-Normal goal and non-Normal row-quality selection each
+   solve and show their badge, no console errors. Not yet done: MaxAccessible milestone-
+   gating of the upgrade-chance walk; quality dimension on the `linked` (off-table link-
+   only) list; fuel-quality picker (fuel defaults to Normal, unchanged from before).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

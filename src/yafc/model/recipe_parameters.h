@@ -106,6 +106,9 @@ struct ProductionSettings {
   float reactorBonusMultiplier = 1;
   // Page-level module defaults (upstream: ProductionTable.modules).
   ModuleFillerParameters filler;
+  // Database::qualityNormal, injected by the caller (nullptr in tests/tools
+  // that never touch quality — see RecipeParameters::quality/qualityNormal).
+  Quality* qualityNormal = nullptr;
 };
 
 struct RecipeParameters {
@@ -118,6 +121,15 @@ struct RecipeParameters {
   std::vector<RecipeRowCustomModule> usedModules;
   EntityBeacon* usedBeacon = nullptr;
   int usedBeaconCount = 0;
+  // Resolved quality dimension (upstream RecipeRow.recipe.quality): `quality`
+  // is this row's target/floor tier (row.quality, defaulting to
+  // qualityNormal); `qualityNormal` is always the Normal tier, forced for
+  // goods that don't accept quality modifiers (fluids, technologies).
+  // Both stay nullptr if the caller never wired ProductionSettings::
+  // qualityNormal — callers that don't care about quality see no behavior
+  // change (single untagged-quality resolution, as before this was ported).
+  Quality* quality = nullptr;
+  Quality* qualityNormal = nullptr;
 
   float productivity() const { return activeEffects.productivity; }
   float fuelUsagePerSecondPerRecipe() const {

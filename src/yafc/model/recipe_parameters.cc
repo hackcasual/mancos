@@ -112,6 +112,9 @@ RecipeParameters RecipeParameters::Calculate(const RecipeRow& row,
   const ObjectWithQuality<EntityCrafter>& entity = row.entity;
   const QualityGoods& fuel = row.fuel;
 
+  result.qualityNormal = settings.qualityNormal;
+  result.quality = row.quality != nullptr ? row.quality : settings.qualityNormal;
+
   if (recipe == nullptr) {
     result.recipeTime = 1;
     return result;

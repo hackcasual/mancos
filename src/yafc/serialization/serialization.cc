@@ -39,13 +39,20 @@ class JsonWriter {
   void Prop(const char* name, T* const& ref) {  // refs: typeDotName strings
     if (ref != nullptr) out_[name] = ref->typeDotName();
   }
+  // Desktop format for a quality-wrapped ref: "!target.typeDotName!quality
+  // .name" (quality's bare internal name, not its typeDotName). Plain
+  // (unwrapped) when quality is unset, matching the pre-quality-threading
+  // format exactly for the common Normal-by-default case.
+  static std::string QualityRef(const FactorioObject* target, const Quality* quality) {
+    return quality != nullptr ? "!" + target->typeDotName() + "!" + quality->name
+                              : target->typeDotName();
+  }
   void Prop(const char* name, const QualityGoods& v) {
-    // TODO(port): quality suffix once quality is threaded through tables.
-    if (v.target != nullptr) out_[name] = v.target->typeDotName();
+    if (v.target != nullptr) out_[name] = QualityRef(v.target, v.quality);
   }
   template <typename T>
   void Prop(const char* name, const ObjectWithQuality<T>& v) {
-    if (v.target != nullptr) out_[name] = v.target->typeDotName();
+    if (v.target != nullptr) out_[name] = QualityRef(v.target, v.quality);
   }
   template <typename T>
     requires std::derived_from<T, FactorioObject>
@@ -126,13 +133,21 @@ class JsonReader {
     if (Read(name, typeDotName)) ref = Resolve<T>(typeDotName);
   }
   void Prop(const char* name, QualityGoods& v) {
-    std::string typeDotName;
-    if (Read(name, typeDotName)) v.target = Resolve<Goods>(typeDotName);
+    std::string ref;
+    if (Read(name, ref)) {
+      auto [target, quality] = ResolveWithQuality<Goods>(ref);
+      v.target = target;
+      v.quality = quality;
+    }
   }
   template <typename T>
   void Prop(const char* name, ObjectWithQuality<T>& v) {
-    std::string typeDotName;
-    if (Read(name, typeDotName)) v.target = Resolve<T>(typeDotName);
+    std::string ref;
+    if (Read(name, ref)) {
+      auto [target, quality] = ResolveWithQuality<T>(ref);
+      v.target = target;
+      v.quality = quality;
+    }
   }
   template <typename T>
     requires std::derived_from<T, FactorioObject>
@@ -213,6 +228,25 @@ class JsonReader {
     return typed;
   }
 
+  // Desktop format: "!target.typeDotName!quality.name" (quality by its bare
+  // internal name, not typeDotName); plain "target.typeDotName" when there's
+  // no quality wrapper. An unresolvable quality name is tolerated (falls back
+  // to nullptr, i.e. RecipeParameters later treats it as Normal) rather than
+  // reported as a load error — the target reference is still valid on its
+  // own, and quality is a value-add overlay, not required for a usable table.
+  template <typename T>
+  std::pair<T*, Quality*> ResolveWithQuality(const std::string& reference) {
+    if (reference.empty() || reference[0] != '!') {
+      return {Resolve<T>(reference), nullptr};
+    }
+    size_t bang = reference.find('!', 1);
+    if (bang == std::string::npos) return {Resolve<T>(reference), nullptr};
+    T* target = Resolve<T>(reference.substr(1, bang - 1));
+    Quality* quality =
+        dynamic_cast<Quality*>(db_.FindByTypeDotName("Quality." + reference.substr(bang + 1)));
+    return {target, quality};
+  }
+
   const nlohmann::json& in_;
   const Database& db_;
   std::vector<std::string>& errors_;
@@ -257,7 +291,16 @@ void VisitModuleFiller(ModuleFillerParameters& f, V& v) {
 
 template <typename V>
 void VisitRow(RecipeRow& row, V& v) {
-  v.Prop("recipe", row.recipe);
+  // Upstream RecipeRow.recipe is IObjectWithQuality<RecipeOrTechnology>: the
+  // "recipe" property is itself a quality-wrapped ref, with the quality being
+  // this row's target/floor tier (RecipeRow::quality here, since this port
+  // keeps `recipe` and `quality` as separate fields rather than one wrapper
+  // type). Bridge through a temporary so both directions share one Prop() —
+  // harmless no-op assignment back on the write path.
+  ObjectWithQuality<RecipeOrTechnology> recipeWithQuality{row.recipe, row.quality};
+  v.Prop("recipe", recipeWithQuality);
+  row.recipe = recipeWithQuality.target;
+  row.quality = recipeWithQuality.quality;
   v.Prop("fuel", row.fuel);
   v.Prop("entity", row.entity);
   v.Prop("fixedBuildings", row.fixedBuildings);

@@ -234,6 +234,25 @@
   #rowDialog .modentry input { width: 60px; }
   #rowDialog .foot { display: flex; gap: 8px; margin-top: 10px; }
   #rowDialog .foot button:first-child { margin-left: auto; }
+  /* ---- amount dialog: shared numeric entry for demand + pinned rate.
+     Native prompt() doesn't reliably show up in installed/standalone-mode
+     PWAs on mobile (iOS Safari in particular), so this replaces it. ---- */
+  #amountDialog { max-width: 380px; }
+  #amountDialog h2 { margin: 0 0 6px; font-family: var(--condensed); font-size: 16px;
+    font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+  #amountHint { margin-bottom: 10px; font-size: 12.5px; }
+  #amountDialog input[type=number] {
+    width: 100%; padding: 9px 10px; background: #14181f; color: inherit;
+    font: 16px var(--mono); border: 1px solid var(--panel-edge); border-radius: 3px;
+  }
+  #amountDialog input[type=number]:focus { outline: 1px solid var(--blueprint); outline-offset: 0; }
+  #amountDialog .foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  #amountQualityRow { margin-top: 10px; }
+  #amountQualityRow select { width: 100%; }
+  /* Quality badge: small icon overlay next to a goods/recipe name — omitted
+     entirely for Normal quality (the overwhelming default) to avoid clutter. */
+  .quality-badge { display: inline-flex; align-items: center; margin-left: 2px; }
+  .quality-badge img { width: 14px !important; height: 14px !important; }
   .plate .mods { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }
   .plate .mods img { width: 16px; height: 16px; }
   .plate button.cfg { padding: 0 6px; background: transparent; border: 0;
@@ -316,6 +335,21 @@
   <div class="foot">
     <button id="rowDialogApply">Apply</button>
     <button id="rowDialogCancel" class="ghost">Cancel</button>
+  </div>
+</dialog>
+<dialog id="amountDialog">
+  <h2 id="amountTitle">Set amount</h2>
+  <div id="amountHint" class="muted"></div>
+  <input type="number" id="amountInput" step="any" inputmode="decimal" aria-label="Amount">
+  <div id="amountQualityRow" hidden>
+    <div class="eyebrow" style="margin:0 0 4px">Quality</div>
+    <select id="amountQuality" aria-label="Quality"></select>
+  </div>
+  <div class="foot">
+    <button id="amountClear" class="ghost" hidden>Unpin</button>
+    <span style="flex:1"></span>
+    <button id="amountApply">Apply</button>
+    <button id="amountCancel" class="ghost">Cancel</button>
   </div>
 </dialog>
 <dialog id="milestonesDialog">
