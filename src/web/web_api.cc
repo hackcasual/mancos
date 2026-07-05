@@ -303,6 +303,47 @@ T* PickDefault(const std::vector<T*>& candidates) {
   return candidates.empty() ? nullptr : candidates[0];
 }
 
+// Default crafter for a new row: favorites win; otherwise the highest-tier
+// BUILDING (best base crafting speed — mk3 beats mk1) that's reachable with
+// the current milestones. The character never wins by default (it "can"
+// craft many recipes but isn't a building), and data-order-first is the
+// last resort — it used to pick assembling-machine-1 with zero module
+// slots, which can't produce quality items at all.
+EntityCrafter* PickDefaultCrafter(const std::vector<EntityCrafter*>& candidates) {
+  for (EntityCrafter* c : candidates) {
+    if (g_favorites.count(c)) return c;
+  }
+  EntityCrafter* best = nullptr;
+  for (EntityCrafter* c : candidates) {
+    if (c->factorioType == "character") continue;
+    if (g_milestones != nullptr && !g_milestones->IsAccessibleWithCurrentMilestones(c)) {
+      continue;
+    }
+    if (best == nullptr || c->baseCraftingSpeed > best->baseCraftingSpeed) best = c;
+  }
+  if (best != nullptr) return best;
+  // Nothing reachable yet: pick the building unlocked SOONEST in milestone
+  // order (early-game machine), not the endgame one.
+  auto milestoneRank = [&](const EntityCrafter* c) {
+    if (g_milestones == nullptr) return -1;  // no analysis: rank all equal
+    FactorioObject* gate = g_milestones->GetHighest(c, /*all=*/false);
+    const auto& order = g_milestones->currentMilestones;
+    for (size_t i = 0; i < order.size(); ++i) {
+      if (order[i] == gate) return static_cast<int>(i);
+    }
+    return static_cast<int>(order.size());
+  };
+  for (EntityCrafter* c : candidates) {
+    if (c->factorioType == "character") continue;
+    if (best == nullptr || milestoneRank(c) < milestoneRank(best) ||
+        (milestoneRank(c) == milestoneRank(best) &&
+         c->baseCraftingSpeed > best->baseCraftingSpeed)) {
+      best = c;
+    }
+  }
+  return best != nullptr ? best : (candidates.empty() ? nullptr : candidates[0]);
+}
+
 std::vector<RecipeRowCustomModule> ParseModuleList(const json& arr) {
   std::vector<RecipeRowCustomModule> list;
   if (!arr.is_array()) return list;
@@ -341,7 +382,7 @@ static std::string tableAddRecipe(std::string tdn, std::string configJson) {
 
   auto* entity = dynamic_cast<EntityCrafter*>(
       Db().FindByTypeDotName(config.value("entity", "")));
-  if (entity == nullptr) entity = PickDefault(r->crafters);
+  if (entity == nullptr) entity = PickDefaultCrafter(r->crafters);
   // Building quality scales crafting speed +30%/level (Quality::
   // ApplyStandardBonus via EntityCrafter::CraftingSpeed in RecipeParameters).
   if (entity != nullptr) {
@@ -468,13 +509,14 @@ static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
   auto* r = dynamic_cast<RecipeOrTechnology*>(Db().FindByTypeDotName(recipeTdn));
   if (r == nullptr) return Err("unknown recipe " + recipeTdn);
   auto* entity = dynamic_cast<EntityCrafter*>(Db().FindByTypeDotName(entityTdn));
-  if (entity == nullptr) entity = PickDefault(r->crafters);
+  if (entity == nullptr) entity = PickDefaultCrafter(r->crafters);
 
   auto brief = [](const FactorioObject* o, json extra = json::object()) {
     extra["tdn"] = o->typeDotName();
     extra["locName"] = o->locName;
     extra["cost"] = CostOf(o);
     extra["favorite"] = g_favorites.count(o) != 0;
+    AddMilestoneInfo(extra, o);
     return extra;
   };
 

@@ -1089,7 +1089,7 @@ async function renderRowConfig() {
   const optRow = async (o, kind, sel, meta) =>
       `<div style="display:flex;align-items:center">${star(o)}
        <button class="opt${sel ? ' sel' : ''}" data-${kind}="${o.tdn}">
-         ${await iconImg(o.tdn)}<span>${esc(o.locName)}</span>
+         ${await iconImg(o.tdn)}<span>${esc(o.locName)}</span>${await lockBadge(o)}
          <span class="meta">${meta}</span></button></div>`;
 
   const crafters = (await Promise.all(opts.crafters.map((c) =>
