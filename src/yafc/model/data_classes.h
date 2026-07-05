@@ -351,6 +351,10 @@ class Technology : public RecipeOrTechnology {
   std::vector<Location*> unlockLocations;
   std::map<Recipe*, float> changeRecipeProductivity;
   bool unlocksFluidMining = false;
+  // Cumulative hand-size / stacking research effects ("change" values).
+  float inserterStackSizeBonus = 0;
+  float bulkInserterCapacityBonus = 0;
+  float beltStackSizeBonus = 0;
   FactorioObject* triggerObject = nullptr;
   std::vector<Entity*> triggerEntities;
   Quality* triggerMinimumQuality = nullptr;
@@ -460,6 +464,11 @@ class EntityBelt : public Entity {
   float beltItemsPerSecond = 0;
 };
 
+class EntityPump : public Entity {
+ public:
+  float pumpingSpeed = 0;  // fluid per second
+};
+
 class EntityBeacon : public EntityWithModules {
  public:
   float beaconEfficiency = 0;
@@ -478,6 +487,9 @@ class EntityInserter : public Entity {
  public:
   float inserterSwingTime = 0;
   bool isBulkInserter = false;
+  // Hand size = 1 + stackSizeBonus + applicable research bonuses.
+  int stackSizeBonus = 0;
+  int maxBeltStackSize = 1;
 };
 
 class EntityAccumulator : public Entity {

@@ -98,6 +98,7 @@ std::string KindOf(const FactorioObject* o) {
   if (dynamic_cast<const EntityCrafter*>(o)) return "EntityCrafter";
   if (dynamic_cast<const EntityBeacon*>(o)) return "EntityBeacon";
   if (dynamic_cast<const EntityBelt*>(o)) return "EntityBelt";
+  if (dynamic_cast<const EntityPump*>(o)) return "EntityPump";
   if (dynamic_cast<const EntityContainer*>(o)) return "EntityContainer";
   if (dynamic_cast<const EntityInserter*>(o)) return "EntityInserter";
   if (dynamic_cast<const EntityAccumulator*>(o)) return "EntityAccumulator";
@@ -125,6 +126,7 @@ std::unique_ptr<FactorioObject> CreateByKind(const std::string& kind) {
   if (kind == "EntityCrafter") return std::make_unique<EntityCrafter>();
   if (kind == "EntityBeacon") return std::make_unique<EntityBeacon>();
   if (kind == "EntityBelt") return std::make_unique<EntityBelt>();
+  if (kind == "EntityPump") return std::make_unique<EntityPump>();
   if (kind == "EntityContainer") return std::make_unique<EntityContainer>();
   if (kind == "EntityInserter") return std::make_unique<EntityInserter>();
   if (kind == "EntityAccumulator") return std::make_unique<EntityAccumulator>();
@@ -230,6 +232,9 @@ json DumpObject(const FactorioObject* o) {
     }
     e["changeRecipeProductivity"] = std::move(changeProd);
     e["unlocksFluidMining"] = t->unlocksFluidMining;
+    e["inserterStackBonus"] = t->inserterStackSizeBonus;
+    e["bulkInserterBonus"] = t->bulkInserterCapacityBonus;
+    e["beltStackBonus"] = t->beltStackSizeBonus;
     e["triggerObject"] = Ref(t->triggerObject);
     e["triggerEntities"] = Refs(t->triggerEntities);
     e["triggerMinQuality"] = Ref(t->triggerMinimumQuality);
@@ -285,6 +290,9 @@ json DumpObject(const FactorioObject* o) {
   if (auto* eb = dynamic_cast<const EntityBelt*>(o)) {
     e["beltSpeed"] = eb->beltItemsPerSecond;
   }
+  if (auto* epu = dynamic_cast<const EntityPump*>(o)) {
+    e["pumpingSpeed"] = epu->pumpingSpeed;
+  }
   if (auto* ebc = dynamic_cast<const EntityBeacon*>(o)) {
     e["beaconEfficiency"] = ebc->beaconEfficiency;
     e["profile"] = ebc->profileValues;
@@ -297,6 +305,8 @@ json DumpObject(const FactorioObject* o) {
   if (auto* ei = dynamic_cast<const EntityInserter*>(o)) {
     e["swingTime"] = ei->inserterSwingTime;
     e["bulk"] = ei->isBulkInserter;
+    e["stackBonus"] = ei->stackSizeBonus;
+    e["maxBeltStack"] = ei->maxBeltStackSize;
   }
   if (auto* eac = dynamic_cast<const EntityAccumulator*>(o)) {
     e["capacity"] = eac->baseAccumulatorCapacity;
@@ -557,6 +567,9 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
         t->changeRecipeProductivity[REF(cp.at(0), Recipe)] = cp.at(1).get<float>();
       }
       t->unlocksFluidMining = e.at("unlocksFluidMining").get<bool>();
+      t->inserterStackSizeBonus = e.value("inserterStackBonus", 0.0f);
+      t->bulkInserterCapacityBonus = e.value("bulkInserterBonus", 0.0f);
+      t->beltStackSizeBonus = e.value("beltStackBonus", 0.0f);
       t->triggerObject = ref(e.at("triggerObject"));
       refs(e.at("triggerEntities"), t->triggerEntities);
       t->triggerMinimumQuality = REF(e.at("triggerMinQuality"), Quality);
@@ -616,6 +629,9 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
     if (auto* eb = dynamic_cast<EntityBelt*>(o)) {
       eb->beltItemsPerSecond = e.at("beltSpeed").get<float>();
     }
+    if (auto* epu = dynamic_cast<EntityPump*>(o)) {
+      epu->pumpingSpeed = e.value("pumpingSpeed", 0.0f);
+    }
     if (auto* ebc = dynamic_cast<EntityBeacon*>(o)) {
       ebc->beaconEfficiency = e.at("beaconEfficiency").get<float>();
       ebc->profileValues = e.at("profile").get<std::vector<float>>();
@@ -628,6 +644,8 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
     if (auto* ei = dynamic_cast<EntityInserter*>(o)) {
       ei->inserterSwingTime = e.at("swingTime").get<float>();
       ei->isBulkInserter = e.at("bulk").get<bool>();
+      ei->stackSizeBonus = e.value("stackBonus", 0);
+      ei->maxBeltStackSize = e.value("maxBeltStack", 1);
     }
     if (auto* eac = dynamic_cast<EntityAccumulator*>(o)) {
       eac->baseAccumulatorCapacity = e.at("capacity").get<float>();

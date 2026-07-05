@@ -130,6 +130,13 @@ void DataDeserializer::LoadTechnologyData(Technology* technology, const Tbl& tab
         }
       } else if (type == "mining-with-fluid") {
         technology->unlocksFluidMining = true;
+      } else if (type == "inserter-stack-size-bonus") {
+        technology->inserterStackSizeBonus += GetFloat(modifier, "modifier", 0);
+      } else if (type == "bulk-inserter-capacity-bonus" ||
+                 type == "stack-inserter-capacity-bonus") {
+        technology->bulkInserterCapacityBonus += GetFloat(modifier, "modifier", 0);
+      } else if (type == "belt-stack-size-bonus") {
+        technology->beltStackSizeBonus += GetFloat(modifier, "modifier", 0);
       } else if (type == "unlock-space-location") {
         Location* location = nullptr;
         if (GetRef<Location>(modifier, "space_location", location)) {

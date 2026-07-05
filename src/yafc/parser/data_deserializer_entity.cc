@@ -432,6 +432,8 @@ void DataDeserializer::DeserializeEntity(const Tbl& table) {
     auto* inserter = GetObject<EntityInserter>(table);
     inserter->inserterSwingTime = 1.0f / (GetFloat(table, "rotation_speed", 1) * 60);
     inserter->isBulkInserter = GetBool(table, "bulk", false) || GetBool(table, "stack", false);
+    inserter->stackSizeBonus = GetInt(table, "stack_size_bonus", 0);
+    inserter->maxBeltStackSize = GetInt(table, "max_belt_stack_size", 1);
   } else if (factorioType == "lab") {
     auto* lab = GetObject<EntityCrafter>(table);
     ParseModules(table, lab, AllowedEffects::kAll & ~AllowedEffects::kQuality);
@@ -503,6 +505,9 @@ void DataDeserializer::DeserializeEntity(const Tbl& table) {
     } else {
       recipeCrafters_.Add(pump, std::string(kPumpingRecipe) + "tile");
     }
+  } else if (factorioType == "pump") {
+    // pumping_speed is fluid per tick; store per second.
+    GetObject<EntityPump>(table)->pumpingSpeed = GetFloat(table, "pumping_speed", 20) * 60.0f;
   } else if (factorioType == "projectile") {
     auto* projectile = GetObject<EntityProjectile>(table);
     if (Tbl actions = GetTbl(table, "action")) {

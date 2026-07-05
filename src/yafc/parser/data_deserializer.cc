@@ -210,6 +210,7 @@ FactorioObject* DataDeserializer::CreateConcrete(Kind kind, const std::string& t
     else if (typeInRaw == "inserter") obj = std::make_unique<EntityInserter>();
     else if (typeInRaw == "lightning-attractor") obj = std::make_unique<EntityAttractor>();
     else if (typeInRaw == "projectile") obj = std::make_unique<EntityProjectile>();
+    else if (typeInRaw == "pump") obj = std::make_unique<EntityPump>();
     else if (typeInRaw == "reactor") obj = std::make_unique<EntityReactor>();
     else if (typeInRaw == "transport-belt") obj = std::make_unique<EntityBelt>();
     else if (typeInRaw == "unit-spawner") obj = std::make_unique<EntitySpawner>();
