@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.5 — 2026-07-05
+
+- Quality upgrades now stop at the highest tier your milestones allow, with
+  that tier absorbing the remaining upgrade chance — no more phantom
+  legendary output while legendary is still locked. The Research tab lists
+  each quality tier with what unlocks it.
+- Module configuration is one box per slot: tap a module to fill every box,
+  tap a box first to fill from it rightward, long-press (or right-click) a
+  box to set just that one.
+- Layout: the Factory project selector and Settings live in the top bar,
+  the solve status sits under the catalog sidebar, and Main products are
+  listed at the top of the catalog.
+- Bundles now carry pump speeds, inserter hand-size data
+  (stack_size_bonus, max_belt_stack_size) and the inserter/bulk-inserter/
+  belt stacking research effects — groundwork for belt and inserter
+  throughput planning. Older bundles keep loading unchanged; rebuild with
+  this bundler to add the new data.
+
 ## v0.1.4 — 2026-07-05
 
 - Quality (Factorio 2.0/2.1) support end to end: demand goals, recipe rows
