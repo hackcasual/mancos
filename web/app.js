@@ -140,12 +140,21 @@ function newPage(name) {
 // Productivity fractions (0.1 = +10%), matching .yafc ProjectSettings units;
 // the settings dialog displays them as percentages.
 function defaultSettings() {
-  return { miningProductivity: 0, researchProductivity: 0, productivityLevels: {} };
+  return { miningProductivity: 0, researchProductivity: 0, productivityLevels: {},
+           hideUnreachable: false };
 }
 function newProject(name) {
   return { name, pages: [newPage('Page 1')], activePage: 0, settings: defaultSettings() };
 }
 const projSettings = () => projects[activeProject].settings ??= defaultSettings();
+// Per-project display preference: drop statically-unreachable objects (the
+// 🚫 tier — not obtainable with this pack's data, e.g. disabled-mod content
+// or the quality-unknown sentinel) from search results, recipe lists and
+// pickers. Milestone-LOCKED items (🔒) always stay visible — they're normal
+// progression targets. Lives only in local project state, not .yafc (a
+// mancos display preference, not a desktop-compatible model field).
+const hideUnreachable = () => !!projSettings().hideUnreachable;
+const reachable = (list) => hideUnreachable() ? list.filter((o) => !o.inaccessible) : list;
 // Sparse {tdn: 1|2}: 1 = over-production allowed, 2 = over-consumption
 // allowed; absent = exact match (desktop per-link setting).
 const linkAlgoOf = (tdn) => pages[activePage].linkAlgos?.[tdn] ?? 0;
@@ -639,7 +648,11 @@ async function lockBadge(o) {
   return '';
 }
 
-async function renderRecipeList(title, list, header = '') {
+async function renderRecipeList(title, allEntries, header = '') {
+  const list = reachable(allEntries);
+  const hiddenNote = allEntries.length !== list.length
+      ? `<div class="muted" style="font-size:12px;padding:2px 0">${allEntries.length - list.length} unreachable hidden (project settings)</div>`
+      : '';
   const items = await Promise.all(list.map(async (r) =>
       `<div class="row"${r.inaccessible ? ' style="opacity:.55"' : ''}>${await iconImg(r.tdn)}` +
       `<span title="${esc(r.tdn)}">${esc(r.locName)}</span>` +
@@ -651,7 +664,7 @@ async function renderRecipeList(title, list, header = '') {
       `${r.in.map((x) => `${x.amount} ${esc(x.name)}`).join(', ') || 'no inputs'} → ` +
       `${r.out.map((x) => `${x.amount} ${esc(x.name)}`).join(', ')}</div>`));
   $('#recipeInfo').innerHTML =
-      `${header}<div class="eyebrow">${esc(title)}</div>` + items.join('');
+      `${header}<div class="eyebrow">${esc(title)}</div>` + hiddenNote + items.join('');
   for (const btn of $('#recipeInfo').querySelectorAll('[data-add]')) {
     btn.onclick = () => { rows.push({ tdn: btn.dataset.add }); rebuildAndSolve(); };
   }
@@ -672,7 +685,7 @@ $('#search').onkeydown = (e) => {
 $('#search').oninput = async (e) => {
   const query = e.target.value.trim();
   if (query.length < 2) { $('#results').innerHTML = ''; return; }
-  const results = await rpc('searchGoods', query, 20);
+  const results = reachable(await rpc('searchGoods', query, 20));
   const html = await Promise.all(results.map(async (g) =>
       `<div class="row goods" data-tdn="${g.tdn}" style="cursor:pointer" tabindex="0">` +
       `${await iconImg(g.tdn)}<span>${esc(g.locName)}</span>${await lockBadge(g)}` +
@@ -1138,7 +1151,7 @@ async function renderRowConfig() {
   // it when quality modules are slotted); "building quality" scales the
   // machine itself (+30% crafting speed per level, same power draw).
   const qualityPicker = async (kind, selectedTdn) =>
-      (await Promise.all(qualities.map(async (q) =>
+      (await Promise.all(reachable(qualities).map(async (q) =>
       `<button class="opt${(selectedTdn || qualities[0]?.tdn) === q.tdn ? ' sel' : ''}"
          data-${kind}="${q.tdn}">
          ${await iconImg(q.tdn)}<span>${esc(q.locName)}</span>
@@ -1297,7 +1310,7 @@ async function refreshQualities() {
   qualities = await rpc('qualityList');
 }
 function qualitySelectHtml(selectedTdn) {
-  return qualities.map((q) =>
+  return reachable(qualities).map((q) =>
       `<option value="${q.tdn}" ${q.tdn === selectedTdn ? 'selected' : ''}>` +
       `${esc(q.locName)}${qualityLocked(q)}</option>`).join('');
 }
@@ -1355,9 +1368,12 @@ let prodTechOptions = null;  // [{tdn, locName, bonusPerLevel, recipes}] per bun
 async function openProjectSettings() {
   prodTechOptions ??= await rpc('productivityOptions');
   const settings = projSettings();
+  $('#setHideUnreachable').checked = !!settings.hideUnreachable;
   $('#setMiningProd').value = Math.round((settings.miningProductivity ?? 0) * 100);
   $('#setResearchProd').value = Math.round((settings.researchProductivity ?? 0) * 100);
-  const rowsHtml = await Promise.all(prodTechOptions.map(async (t) => {
+  // The unreachable filter applies here too (a hidden tech keeps its saved
+  // level — the Done handler folds unseen inputs back from current settings).
+  const rowsHtml = await Promise.all(reachable(prodTechOptions).map(async (t) => {
     const level = settings.productivityLevels?.[t.tdn] ?? 0;
     const affected = (t.recipes ?? []).map((r) => r.locName).join(', ');
     return `<div class="row">${await iconImg(t.tdn)}
@@ -1375,15 +1391,22 @@ async function openProjectSettings() {
 $('#projectSettingsBtn').onclick = openProjectSettings;
 $('#projectSettingsDone').onclick = () => {
   const settings = projSettings();
+  settings.hideUnreachable = $('#setHideUnreachable').checked;
   settings.miningProductivity = Math.max(0, (+$('#setMiningProd').value || 0) / 100);
   settings.researchProductivity = Math.max(0, (+$('#setResearchProd').value || 0) / 100);
-  const levels = {};
+  // Start from saved levels so techs hidden from the list (unreachable
+  // filter) keep theirs; visible inputs then overwrite/remove.
+  const levels = { ...(settings.productivityLevels ?? {}) };
   for (const input of $('#prodTechList').querySelectorAll('[data-prod-tech]')) {
     const level = Math.max(0, Math.round(+input.value || 0));
     if (level > 0) levels[input.dataset.prodTech] = level;
+    else delete levels[input.dataset.prodTech];
   }
   settings.productivityLevels = levels;
   $('#projectSettingsDialog').close();
+  // The catalog panel may be showing now-filtered content.
+  const search = $('#search');
+  if (search.value.trim().length >= 2) search.oninput({ target: search });
   rebuildAndSolve();
 };
 
