@@ -447,12 +447,14 @@ const short = (tdn) => tdn.split('.').slice(1).join('.');
 async function renderSolve(result) {
   const statusNames = ['solved', 'no solution — unexplained deadlocks',
                        'numerical errors', 'unexpected error'];
-  status(`${statusNames[result.status] ?? '?'} · ${rows.length} rows · ` +
-         `${goals.length + linked.length} links`);
+  const solveInfo = $('#solveInfo');
+  solveInfo.hidden = false;
+  solveInfo.textContent = `${statusNames[result.status] ?? '?'} · ${rows.length} rows · ` +
+      `${goals.length + linked.length} links`;
 
   // Goals: amber pills, click amount to edit, x to remove. Main products
-  // (output demand) get their own section, separate from input goals
-  // (negative perMin — "consume this much").
+  // (output demand) live at the top of the catalog sidebar; input goals
+  // (negative perMin — "consume this much") stay in the workspace strip.
   const goalPill = async (g) => {
     const i = goals.indexOf(g);
     return `<span class="pill goal${g.perMin < 0 ? ' input' : ''}">` +
@@ -460,37 +462,44 @@ async function renderSolve(result) {
            <button class="small ghost amt" data-goal="${i}" title="Edit demand">${g.perMin}/min</button>
            <button class="x" data-goal-x="${i}" aria-label="Remove goal">✕</button></span>`;
   };
+  const outputs = goals.filter((g) => g.perMin >= 0);
+  const inputs = goals.filter((g) => g.perMin < 0);
+  const catalogGoals = $('#catalogGoals');
+  catalogGoals.hidden = outputs.length === 0;
+  catalogGoals.innerHTML = outputs.length
+      ? `<div class="eyebrow" style="margin:0 0 4px">Main products</div>` +
+        (await Promise.all(outputs.map(goalPill))).join('')
+      : '';
   if (goals.length === 0) {
     $('#goals').innerHTML = '<span class="muted">No demand set — search a goods, then “Set demand”.</span>';
   } else {
-    const outputs = goals.filter((g) => g.perMin >= 0);
-    const inputs = goals.filter((g) => g.perMin < 0);
-    const outputsHtml = (await Promise.all(outputs.map(goalPill))).join('');
-    const inputsHtml = (await Promise.all(inputs.map(goalPill))).join('');
     $('#goals').innerHTML =
-        (outputs.length ? `<div class="eyebrow" style="margin:0 0 4px">Main products</div>${outputsHtml}` : '') +
-        (inputs.length ? `<div class="eyebrow" style="margin:10px 0 4px">Inputs to consume</div>${inputsHtml}` : '');
+        (inputs.length ? `<div class="eyebrow" style="margin:0 0 4px">Inputs to consume</div>` +
+            (await Promise.all(inputs.map(goalPill))).join('') : '');
   }
-  for (const btn of $('#goals').querySelectorAll('[data-goal]')) {
-    btn.onclick = () => {
-      const goal = goals[+btn.dataset.goal];
-      openAmountDialog({
-        title: `Demand for ${goal.name}`,
-        hint: 'Units per minute — negative = input goal: consume this much.',
-        value: goal.perMin,
-        quality: hasSelectableQualities() ? { selected: goal.quality } : undefined,
-        onApply: (perMin, raw, qualityTdn) => {
-          if (!Number.isFinite(perMin) || perMin === 0) return false;
-          goal.perMin = perMin;
-          goal.quality = qualityTdn;
-          rebuildAndSolve();
-          return true;
-        },
-      });
-    };
-  }
-  for (const btn of $('#goals').querySelectorAll('[data-goal-x]')) {
-    btn.onclick = () => { goals.splice(+btn.dataset.goalX, 1); rebuildAndSolve(); };
+  const goalContainers = [catalogGoals, $('#goals')];
+  for (const container of goalContainers) {
+    for (const btn of container.querySelectorAll('[data-goal]')) {
+      btn.onclick = () => {
+        const goal = goals[+btn.dataset.goal];
+        openAmountDialog({
+          title: `Demand for ${goal.name}`,
+          hint: 'Units per minute — negative = input goal: consume this much.',
+          value: goal.perMin,
+          quality: hasSelectableQualities() ? { selected: goal.quality } : undefined,
+          onApply: (perMin, raw, qualityTdn) => {
+            if (!Number.isFinite(perMin) || perMin === 0) return false;
+            goal.perMin = perMin;
+            goal.quality = qualityTdn;
+            rebuildAndSolve();
+            return true;
+          },
+        });
+      };
+    }
+    for (const btn of container.querySelectorAll('[data-goal-x]')) {
+      btn.onclick = () => { goals.splice(+btn.dataset.goalX, 1); rebuildAndSolve(); };
+    }
   }
 
   // Recipe nameplates.
@@ -1055,6 +1064,7 @@ async function pushFavorites() {
 }
 
 let rowConfig = null;  // working copy while the dialog is open
+let suppressSlotClick = false;  // long-press fired; eat the trailing click
 
 async function openRowConfig(i) {
   const row = rows[i];
@@ -1070,6 +1080,7 @@ async function openRowConfig(i) {
     list: (modules.list ?? []).map((m) => ({ ...m })),
     beacon: modules.beacon ?? '',
     beaconList: (modules.beaconList ?? []).map((m) => ({ ...m })),
+    slotSel: null,  // module box selection: null | {from, single}
   };
   await renderRowConfig();
   $('#rowDialog').showModal();
@@ -1149,6 +1160,8 @@ async function renderRowConfig() {
       .filter(Boolean).join(' ');
 
   // Template entries: count editable in place (0 = fill remaining slots).
+  // Still used for beacon modules, whose counts are totals across all
+  // beacons and can exceed one beacon's slot count.
   const entryRows = async (entries, kind) => (await Promise.all(entries.map(async (e, i) =>
       `<div class="row modentry">${await iconImg(e.tdn)}
          <span>${esc(e.locName ?? short(e.tdn))}</span>
@@ -1158,8 +1171,52 @@ async function renderRowConfig() {
          <button class="x" data-${kind}-x="${i}" aria-label="Remove">✕</button>
        </div>`))).join('');
 
+  // Crafter modules as one box per slot. The stored {tdn, count} entry list
+  // (count 0 = fill remaining) expands to slots for display and compresses
+  // back on every edit — older projects round-trip losslessly.
+  const slotCount = opts.moduleSlots;
+  const expandSlots = (entries) => {
+    const slots = new Array(slotCount).fill(null);
+    let at = 0;
+    for (const e of entries) {
+      const n = e.count === 0 ? slotCount - at : e.count;
+      for (let k = 0; k < n && at < slotCount; k++) slots[at++] = { tdn: e.tdn, locName: e.locName };
+    }
+    return slots;
+  };
+  const compressSlots = (slots) => {
+    const out = [];
+    for (const s of slots) {
+      if (!s) continue;
+      const last = out.at(-1);
+      if (last && last.tdn === s.tdn) last.count += 1;
+      else out.push({ tdn: s.tdn, locName: s.locName, count: 1 });
+    }
+    return out;
+  };
+  const slots = expandSlots(rowConfig.list);
+  const slotSel = rowConfig.slotSel;  // null | {from, single}
+  const slotBoxes = (await Promise.all(slots.map(async (s, i) => {
+    let cls = '';
+    if (slotSel) {
+      if (slotSel.single) cls = i === slotSel.from ? ' sel' : i > slotSel.from ? ' dim' : '';
+      else cls = i >= slotSel.from ? ' sel' : '';
+    }
+    return `<button class="modslot${cls}" data-slot="${i}"
+       title="${s ? esc(s.locName ?? short(s.tdn)) : 'empty slot'} — tap: fill from here · long-press: this box only"
+       aria-label="Module slot ${i + 1}">${s ? await iconImg(s.tdn) : ''}</button>`;
+  }))).join('');
+  const slotHint = !slotSel
+      ? 'Pick a module to fill every box — or tap a box first to fill from it rightward; long-press a box to set just that one.'
+      : slotSel.single
+          ? `Setting box ${slotSel.from + 1} only — pick a module (or Empty).`
+          : `Filling boxes ${slotSel.from + 1}–${slotCount} — pick a module (or Empty).`;
+
   const modulePalette = (await Promise.all(opts.modules.map((m) =>
       optRow(m, 'add-module', false, specMeta(m))))).join('');
+  const clearOpt = `<div style="display:flex;align-items:center"><span class="fav"></span>
+      <button class="opt" data-add-module="">
+        <span style="width:22px"></span><span>Empty — clear</span></button></div>`;
   const beacons = (await Promise.all(opts.beacons.map((b) =>
       optRow(b, 'pick-beacon', b.tdn === rowConfig.beacon,
              `${b.moduleSlots} slots · eff ${(+b.efficiency.toFixed(2))}`)))).join('');
@@ -1192,12 +1249,11 @@ async function renderRowConfig() {
     ${hasSelectableQualities() ? `
       <div class="eyebrow" title="Ingredients are consumed at this tier; products start at it and upgrade from quality modules">Recipe quality</div>
       <div class="opts">${qualityOpts}</div>` : ''}
-    ${opts.moduleSlots > 0 || rowConfig.list.length ? `
-      <div class="eyebrow">Modules — ${opts.moduleSlots} slots</div>
-      ${rowConfig.list.length
-          ? await entryRows(rowConfig.list, 'mod')
-          : '<div class="muted" style="padding:2px 6px">No modules — pick from the list to add.</div>'}
-      <div class="opts">${modulePalette}</div>` : ''}
+    ${slotCount > 0 ? `
+      <div class="eyebrow">Modules — ${slotCount} slot${slotCount === 1 ? '' : 's'}</div>
+      <div class="modslots">${slotBoxes}</div>
+      <div class="muted" style="font-size:12px;padding:0 2px">${slotHint}</div>
+      <div class="opts">${clearOpt}${modulePalette}</div>` : ''}
     ${opts.beacons.length ? `
       <div class="eyebrow">Beacons</div>
       <div class="opts">
@@ -1244,28 +1300,58 @@ async function renderRowConfig() {
       renderRowConfig();
     };
   }
-  // Palette click appends an entry (first entry defaults to fill-remaining);
-  // clicking a module already in the template bumps its fixed count instead.
-  const addEntry = (entries, tdn, locName, defaultCount) => {
-    const existing = entries.find((e) => e.tdn === tdn);
-    if (existing) {
-      if (existing.count > 0) existing.count += 1;
-    } else {
-      entries.push({ tdn, locName, count: defaultCount });
-    }
-    renderRowConfig();
-  };
+  // Palette click fills slots according to the current box selection:
+  // no selection = every box, a tapped box = it and everything rightward,
+  // a long-pressed box = just that box. '' (Empty) clears the same range.
   for (const btn of body.querySelectorAll('[data-add-module]')) {
     btn.onclick = () => {
-      const m = opts.modules.find((x) => x.tdn === btn.dataset.addModule);
-      addEntry(rowConfig.list, m.tdn, m.locName, rowConfig.list.length === 0 ? 0 : 1);
+      const tdn = btn.dataset.addModule;
+      const m = tdn ? opts.modules.find((x) => x.tdn === tdn) : null;
+      const from = slotSel ? slotSel.from : 0;
+      const to = slotSel?.single ? slotSel.from : slotCount - 1;
+      for (let i = from; i <= to; i++) {
+        slots[i] = m ? { tdn: m.tdn, locName: m.locName } : null;
+      }
+      rowConfig.list = compressSlots(slots);
+      rowConfig.slotSel = null;
+      renderRowConfig();
     };
+  }
+  for (const box of body.querySelectorAll('[data-slot]')) {
+    const i = +box.dataset.slot;
+    let timer = null;
+    const selectSingle = () => {
+      rowConfig.slotSel = { from: i, single: true };
+      renderRowConfig();
+    };
+    box.onpointerdown = () => {
+      timer = setTimeout(() => {
+        timer = null;
+        suppressSlotClick = true;
+        setTimeout(() => { suppressSlotClick = false; }, 600);
+        selectSingle();
+      }, 450);
+    };
+    box.onpointerup = box.onpointerleave = box.onpointercancel =
+        () => { clearTimeout(timer); timer = null; };
+    box.onclick = () => {
+      if (suppressSlotClick) { suppressSlotClick = false; return; }
+      const cur = rowConfig.slotSel;
+      rowConfig.slotSel =
+          cur && cur.from === i && !cur.single ? null : { from: i, single: false };
+      renderRowConfig();
+    };
+    // Desktop shortcut for "this box only".
+    box.oncontextmenu = (e) => { e.preventDefault(); selectSingle(); };
   }
   for (const btn of body.querySelectorAll('[data-add-beacon-module]')) {
     btn.onclick = () => {
       const m = selectedBeacon.modules.find((x) => x.tdn === btn.dataset.addBeaconModule);
-      addEntry(rowConfig.beaconList, m.tdn, m.locName,
-               selectedBeacon.moduleSlots || 1);
+      const existing = rowConfig.beaconList.find((e) => e.tdn === m.tdn);
+      if (existing) existing.count += 1;
+      else rowConfig.beaconList.push({ tdn: m.tdn, locName: m.locName,
+                                       count: selectedBeacon.moduleSlots || 1 });
+      renderRowConfig();
     };
   }
   const wireEntries = (kind, entries) => {
@@ -1284,7 +1370,6 @@ async function renderRowConfig() {
       };
     }
   };
-  wireEntries('mod', rowConfig.list);
   wireEntries('bmod', rowConfig.beaconList);
   for (const btn of body.querySelectorAll('[data-pick-beacon]')) {
     btn.onclick = () => {
@@ -1594,6 +1679,7 @@ async function loadBundleBuffer(buffer, label, packId) {
   $('#search').disabled = false;
   $('#dropHint').hidden = true;
   $('#workspace').hidden = false;
+  $('#projectBar').hidden = false;
   const { ok: fromUrl, milestonesApplied: sharedMilestonesApplied } = await loadProjectFromUrl();
   if (!fromUrl) {
     if (restore()) {
@@ -1668,6 +1754,10 @@ $('#switchBtn').onclick = () => {
   $('#qualityLevels').hidden = true;
   updateUndoButtons();
   $('#workspace').hidden = true;
+  $('#projectBar').hidden = true;
+  $('#catalogGoals').hidden = true;
+  $('#catalogGoals').innerHTML = '';
+  $('#solveInfo').hidden = true;
   $('#dropHint').hidden = false;
   $('#packName').textContent = '';
   status('no bundle loaded — pick a pack');

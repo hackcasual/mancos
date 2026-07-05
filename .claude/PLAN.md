@@ -522,6 +522,28 @@ Recipe + status: `solver-wasm/README.md`.
    modules -> 1111 crafts/min, five-tier spread, goal matched, tiered surpluses
    actionable. Caveat: the era heuristic can misjudge exotic modded quality chains in OLD
    bundles only (new bundles carry chainProbability explicitly).
+   Increment 16 (2026-07-05): groundwork for belt/inserter throughput planning (user
+   question: what does the bundle carry?) — bundles gain EntityPump.pumpingSpeed (fluid/s;
+   'pump' prototypes were plain Entities before), EntityInserter.stackSizeBonus +
+   maxBeltStackSize, and Technology accumulators for inserter-stack-size-bonus /
+   bulk-inserter-capacity-bonus (+1.1's stack-inserter alias) / belt-stack-size-bonus —
+   NOTE these research modifiers keep their value under 'modifier', unlike
+   change-recipe-productivity's 'change'. Old bundles load with defaults (no rebuild
+   needed, but rebuilding adds the new data). Verified on vanilla-SA and Py rebuilds
+   (Py: microfilters prod techs, 'Mechanical inserter' locName, Bob-boosted 12000/s pump).
+   UI polish (user directive): the Factory project selector + Settings moved into the
+   header (#projectBar, shown once a bundle loads); solve status moved from the header to
+   a #solveInfo footer pinned under the left sidebar (body is now a flex column — main no
+   longer hardcodes the header height; header is nowrap with status/packName ellipsizing);
+   Main-products goal pills moved to the top of the catalog panel (#catalogGoals — the
+   workspace strip keeps input goals only, both spots share edit/remove handlers).
+   Module config rebuilt as per-slot boxes (user-specced semantics): tap a module = fill
+   every box; tap a box = select it + everything rightward, next module fills that range;
+   long-press (450ms, or right-click) = single-box fill; 'Empty' palette entry clears by
+   the same rules. Storage unchanged ({tdn,count} runs, count 0 = fill-remaining expands
+   on open, boxes compress back on edit) so old projects/.yafc round-trip; beacon modules
+   keep the count-entry UI (totals span multiple beacons). All verified via CDP desktop +
+   mobile runs (fresh profile matters: the service worker serves a stale shell otherwise).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.
