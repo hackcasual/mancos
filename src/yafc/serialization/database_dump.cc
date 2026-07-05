@@ -137,6 +137,13 @@ std::unique_ptr<FactorioObject> CreateByKind(const std::string& kind) {
   if (kind == "Location") return std::make_unique<Location>();
   if (kind == "Quality") return std::make_unique<Quality>();
   if (kind == "ResearchTrigger") return std::make_unique<ResearchTrigger>();
+  // Forward compatibility: a newer bundler may introduce entity subkinds this
+  // build doesn't know (e.g. EntityPump before it existed here). Entities are
+  // structurally safe to load as their base class — derived-only fields are
+  // skipped because every reader block is dynamic_cast-gated. Non-entity
+  // kinds stay fatal: recipes/goods with unknown semantics would corrupt the
+  // solve rather than merely lose detail.
+  if (kind.rfind("Entity", 0) == 0) return std::make_unique<Entity>();
   throw std::runtime_error("load: unknown object kind " + kind);
 }
 

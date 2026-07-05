@@ -189,6 +189,8 @@
   .pill.loose { border-style: dashed; }
   .pill button.algo { padding: 0 6px; font-size: 12px; min-height: 0; }
   .pill button.x { font-size: 12px; padding: 0 4px; }
+  .logi { font-size: 11px; font-family: var(--condensed); white-space: nowrap;
+    cursor: help; }
 
   #pageTabs {
     display: flex; gap: 4px; align-items: center; overflow-x: auto;
@@ -441,6 +443,20 @@
     <span style="flex:1">Research productivity</span>
     <input type="number" id="setResearchProd" min="0" step="10" style="width:80px"
            inputmode="decimal" aria-label="Research productivity percent"><span class="muted">%</span>
+  </div>
+  <div class="eyebrow" title="Used to express flows as belt and inserter counts">Logistics</div>
+  <div class="row">
+    <span style="flex:1">Default belt</span>
+    <select id="setDefaultBelt" aria-label="Default belt" style="max-width:56%"></select>
+  </div>
+  <div class="row">
+    <span style="flex:1">Default inserter</span>
+    <select id="setDefaultInserter" aria-label="Default inserter" style="max-width:56%"></select>
+  </div>
+  <div class="row" title="Items moved per swing. 0 = derive from the inserter plus researched capacity bonuses (mark researches in the Research tab)">
+    <span style="flex:1">Inserter capacity</span>
+    <input type="number" id="setInserterCapacity" min="0" step="1" style="width:80px"
+           inputmode="numeric" aria-label="Inserter capacity"><span class="muted">0 = auto</span>
   </div>
   <div class="eyebrow">Productivity research levels</div>
   <div id="prodTechList" style="max-height:40vh;overflow-y:auto"></div>

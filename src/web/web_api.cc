@@ -501,6 +501,53 @@ static std::string productivityOptions() {
   return out.dump();
 }
 
+// Belts, inserters and the research-derived hand-size bonuses, for the
+// belt/inserter throughput planning UI (project-settings pickers + flow
+// displays). Inserter capacity = 1 + stackSizeBonus + the researched
+// inserter-stack-size (or, for bulk inserters, bulk-inserter-capacity)
+// bonuses; the bonuses are summed here from the researched-technology set
+// so the UI can offer an "auto" capacity that tracks research state.
+static std::string logisticsOptions() {
+  if (g_bundle == nullptr) return Err("no bundle loaded");
+  json belts = json::array();
+  json inserters = json::array();
+  for (FactorioObject* o : Db().objects) {
+    if (auto* b = dynamic_cast<EntityBelt*>(o)) {
+      json brief{{"tdn", b->typeDotName()},
+                 {"locName", b->locName},
+                 {"itemsPerSecond", b->beltItemsPerSecond}};
+      AddMilestoneInfo(brief, b);
+      belts.push_back(std::move(brief));
+    } else if (auto* i = dynamic_cast<EntityInserter*>(o)) {
+      json brief{{"tdn", i->typeDotName()},
+                 {"locName", i->locName},
+                 {"swingTime", i->inserterSwingTime},
+                 {"bulk", i->isBulkInserter},
+                 {"stackSizeBonus", i->stackSizeBonus},
+                 {"maxBeltStackSize", i->maxBeltStackSize}};
+      AddMilestoneInfo(brief, i);
+      inserters.push_back(std::move(brief));
+    }
+  }
+  std::sort(belts.begin(), belts.end(), [](const json& a, const json& b) {
+    return a["itemsPerSecond"].get<float>() < b["itemsPerSecond"].get<float>();
+  });
+  std::sort(inserters.begin(), inserters.end(), [](const json& a, const json& b) {
+    return a["swingTime"].get<float>() > b["swingTime"].get<float>();
+  });
+  float inserterBonus = 0, bulkBonus = 0, beltStackBonus = 0;
+  for (const Technology* t : g_researched) {
+    inserterBonus += t->inserterStackSizeBonus;
+    bulkBonus += t->bulkInserterCapacityBonus;
+    beltStackBonus += t->beltStackSizeBonus;
+  }
+  return json{{"belts", std::move(belts)},
+              {"inserters", std::move(inserters)},
+              {"researchBonus", json{{"inserter", inserterBonus},
+                                     {"bulk", bulkBonus},
+                                     {"beltStack", beltStackBonus}}}}.dump();
+}
+
 // Favorites double as defaults (desktop: starred objects float to the top
 // and win the default pick). Input: {"favorites": [tdn...]}.
 static std::string setDefaults(std::string request) {
@@ -1118,6 +1165,7 @@ EMSCRIPTEN_BINDINGS(yafc_web) {
   emscripten::function("tableSetFiller", &tableSetFiller);
   emscripten::function("tableSetSettings", &tableSetSettings);
   emscripten::function("productivityOptions", &productivityOptions);
+  emscripten::function("logisticsOptions", &logisticsOptions);
   emscripten::function("setDefaults", &setDefaults);
   emscripten::function("rowOptions", &rowOptions);
   emscripten::function("tableSolve", &tableSolve);

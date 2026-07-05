@@ -544,6 +544,27 @@ Recipe + status: `solver-wasm/README.md`.
    on open, boxes compress back on edit) so old projects/.yafc round-trip; beacon modules
    keep the count-entry UI (totals span multiple beacons). All verified via CDP desktop +
    mobile runs (fresh profile matters: the service worker serves a stale shell otherwise).
+   Increment 17 (2026-07-05): belt/inserter throughput planning v1 (user directive) —
+   logisticsOptions web API (belts speed-ascending, inserters throughput-ascending, plus
+   researched inserter-stack/bulk-capacity/belt-stack bonus sums from g_researched);
+   per-project logistics settings {defaultBelt, defaultInserter, inserterCapacity}
+   ('' / 0 = auto: best milestone-reachable pick, hand size 1 + stackSizeBonus +
+   researched bonus); belt-count chips on link pills and off-table item flows with a
+   belts+inserters tooltip, and the same detail appended to row-flow tooltips (fluids
+   excluded — pipes). Verified in-browser: 2700/min = 0.75 turbo belts auto / 3.00 on an
+   explicit transport-belt override; stack inserter auto hand size 5. NOTE: chips skip
+   zero flows — a goal link with no producer row shows nothing (tripped the first test).
+   Per-project milestones (user directive): settings.milestones per project (inherit-
+   active when absent, mancos-local, not written to .yafc); project switch / undo-redo /
+   bundle-load apply the active project's set (applyProjectMilestones no-ops when equal);
+   creating a project opens the milestones dialog (closing stamps the set). Search box
+   clears after +row (user directive). Forward-compat hotfix (user-reported "unknown
+   object kind EntityPump"): stale cached apps loading newer bundles now degrade —
+   unknown Entity* kinds load as plain Entity (dynamic_cast-gated readers skip derived
+   fields); non-entity kinds stay fatal. window.__mancosDebug test hook {rpc, logistics,
+   settings}. Testing traps: python http.server sends no Cache-Control, so Chrome
+   heuristic-caches app.js between rebuilds within a browser session — disable cache or
+   use a fresh profile per build.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

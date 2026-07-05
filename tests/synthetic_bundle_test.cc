@@ -202,3 +202,33 @@ TEST_CASE("synthetic bundle: write, reload, and solve recipes (CI path)") {
 
   std::remove(path.c_str());
 }
+
+TEST_CASE("unknown Entity subkinds from newer bundlers load as plain entities") {
+  std::unique_ptr<Database> source = BuildSyntheticDatabase();
+  nlohmann::json dump = DumpDatabase(*source);
+
+  // Simulate a future bundler: the beacon (referenced by nothing typed)
+  // carries an entity kind this build has never heard of, plus a field
+  // only that kind would understand.
+  bool patched = false;
+  for (auto& e : dump["objects"]) {
+    if (e["name"] == "beacon") {
+      e["kind"] = "EntityWarpGate";
+      e["warpFactor"] = 9.75;
+      patched = true;
+    }
+  }
+  REQUIRE(patched);
+
+  std::unique_ptr<Database> reloaded = LoadDatabase(dump);
+  REQUIRE(reloaded != nullptr);
+  FactorioObject* gate = reloaded->FindByTypeDotName("Entity.beacon");
+  REQUIRE(gate != nullptr);
+  CHECK(dynamic_cast<Entity*>(gate) != nullptr);       // base data survives
+  CHECK(dynamic_cast<EntityBeacon*>(gate) == nullptr);  // subkind detail lost
+
+  // Truly unknown non-entity kinds must still refuse to load.
+  nlohmann::json bad = DumpDatabase(*source);
+  bad["objects"][0]["kind"] = "QuantumRecipe";
+  CHECK_THROWS(LoadDatabase(bad));
+}

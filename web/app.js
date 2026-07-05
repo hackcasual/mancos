@@ -141,7 +141,10 @@ function newPage(name) {
 // the settings dialog displays them as percentages.
 function defaultSettings() {
   return { miningProductivity: 0, researchProductivity: 0, productivityLevels: {},
-           hideUnreachable: false };
+           hideUnreachable: false,
+           // Belt/inserter throughput planning: '' = auto-pick the best
+           // milestone-reachable option; capacity 0 = derive from research.
+           defaultBelt: '', defaultInserter: '', inserterCapacity: 0 };
 }
 function newProject(name) {
   return { name, pages: [newPage('Page 1')], activePage: 0, settings: defaultSettings() };
@@ -191,18 +194,105 @@ function setActivePage(index) {
   renderPageTabs();
   rebuildAndSolve();
 }
-function setActiveProject(index) {
+async function setActiveProject(index) {
   activeProject = Math.max(0, Math.min(index, projects.length - 1));
   bindActivePage();
   renderPageTabs();
+  await applyProjectMilestones();
   rebuildAndSolve();
+}
+
+// Milestones are per project (settings.milestones — a project models one game
+// state, so its reachability set travels with it). Projects without their own
+// set inherit whatever is active (the bundle-level default). Applies the
+// active project's set to the worker when it differs from the current one.
+async function applyProjectMilestones() {
+  const saved = projSettings().milestones;
+  if (!Array.isArray(saved) || milestones.length === 0) return;
+  const current = milestones.filter((m) => m.unlocked).map((m) => m.tdn);
+  if (JSON.stringify([...saved].sort()) === JSON.stringify([...current].sort())) return;
+  milestones = await rpc('setMilestones', JSON.stringify({ unlocked: saved }));
+  renderMilestonesSummary();
+  logistics = null;       // reachability in the briefs is stale
+  prodTechOptions = null;
+  await refreshQualities();
 }
 let research = { filter: false, techs: [] };
 
 async function pushResearch() {
   research = await rpc('setResearch', JSON.stringify(research));
   if (bundleKey) localStorage.setItem(bundleKey + ':research', JSON.stringify(research));
+  logistics = null;  // research-derived inserter capacity may have changed
 }
+
+// ---- belt/inserter throughput planning ----
+// {belts: [{tdn, locName, itemsPerSecond, milestone?, inaccessible?}...] speed-
+// ascending, inserters: [...] throughput-ascending, researchBonus: {inserter,
+// bulk, beltStack}} — refetched when research or milestones change (both feed
+// the capacity/reachability data baked into the briefs).
+let logistics = null;
+
+async function getLogistics() {
+  if (!logistics) {
+    const result = await rpc('logisticsOptions');
+    if (!result.error) logistics = result;
+  }
+  return logistics;
+}
+
+// Auto pick = the best milestone-reachable option (matches the default-
+// crafter philosophy); an explicit project setting wins.
+function pickLogi(list, settingTdn) {
+  if (!list || list.length === 0) return null;
+  if (settingTdn) {
+    const chosen = list.find((o) => o.tdn === settingTdn);
+    if (chosen) return chosen;
+  }
+  const reachableList = list.filter((o) => !o.inaccessible && !o.milestone);
+  return reachableList.at(-1) ?? list[0];
+}
+const projBelt = () => pickLogi(logistics?.belts, projSettings().defaultBelt);
+const projInserter = () => pickLogi(logistics?.inserters, projSettings().defaultInserter);
+function inserterCapacityOf(ins) {
+  const manual = projSettings().inserterCapacity ?? 0;
+  if (manual > 0) return manual;
+  if (!ins) return 1;
+  const bonus = ins.bulk ? logistics?.researchBonus?.bulk : logistics?.researchBonus?.inserter;
+  return 1 + (ins.stackSizeBonus ?? 0) + (bonus ?? 0);
+}
+
+// Belt/inserter requirement of an item flow (per-SECOND, as the solver
+// reports); fluids move by pipe, so they get nothing. Returns null or
+// {belts, beltName, inserters, inserterName, capacity}.
+function logiFor(tdn, perSecond) {
+  if (!logistics || !tdn.startsWith('Item.')) return null;
+  const belt = projBelt();
+  const ins = projInserter();
+  if (!belt && !ins) return null;
+  const flow = Math.abs(perSecond);
+  const out = {};
+  if (belt && belt.itemsPerSecond > 0) {
+    out.belts = flow / belt.itemsPerSecond;
+    out.beltName = belt.locName;
+  }
+  if (ins && ins.swingTime > 0) {
+    out.capacity = inserterCapacityOf(ins);
+    out.inserters = flow * ins.swingTime / out.capacity;
+    out.inserterName = ins.locName;
+  }
+  return out;
+}
+const logiTitle = (l) => !l ? '' :
+    [l.belts !== undefined ? `${fmt(l.belts)} × ${l.beltName}` : '',
+     l.inserters !== undefined
+         ? `${fmt(l.inserters)} × ${l.inserterName} (hand size ${l.capacity})` : '']
+    .filter(Boolean).join(' · ');
+// Inline chip for pills/flow rows; belts only (inserters live in the title).
+const logiChip = (tdn, perSecond) => {
+  const l = logiFor(tdn, perSecond);
+  if (!l || l.belts === undefined || l.belts < 0.01) return '';
+  return `<span class="muted logi" title="${esc(logiTitle(l))}">${fmt(l.belts)} belts</span>`;
+};
 
 // ---- undo/redo: projects-state snapshots captured on every persisted
 // change. Tab/project switches update the tracked state silently (not
@@ -247,6 +337,7 @@ async function timeTravel(fromStack, toStack) {
   toStack.push(JSON.stringify({ projects, activeProject }));
   restoringHistory = true;
   applySnapshot(fromStack.pop());
+  await applyProjectMilestones();  // snapshots carry per-project milestones
   await rebuildAndSolve();
   restoringHistory = false;
   updateUndoButtons();
@@ -344,9 +435,12 @@ function renderPageTabs() {
   }
 }
 
-$('#addProject').onclick = () => {
+$('#addProject').onclick = async () => {
   projects.push(newProject(`Project ${projects.length + 1}`));
-  setActiveProject(projects.length - 1);
+  await setActiveProject(projects.length - 1);
+  // A new project usually means a new game state: re-ask for milestones
+  // (starting from the current set; closing the dialog stamps the project).
+  if (milestones.length > 0) openMilestones();
 };
 $('#renameProject').onclick = () => {
   const name = prompt('Project name:', projects[activeProject].name);
@@ -445,6 +539,7 @@ function fmt(x) {
 const short = (tdn) => tdn.split('.').slice(1).join('.');
 
 async function renderSolve(result) {
+  await getLogistics();  // belt/inserter chips below need the lists
   const statusNames = ['solved', 'no solution — unexplained deadlocks',
                        'numerical errors', 'unexpected error'];
   const solveInfo = $('#solveInfo');
@@ -504,10 +599,13 @@ async function renderSolve(result) {
 
   // Recipe nameplates.
   const plates = await Promise.all(result.rows.map(async (row, i) => {
-    const flows = (await Promise.all(row.flows.map(async (f) =>
-        `<button class="flow chip ${f.perMin >= 0 ? 'pos' : 'neg'}" data-goods="${f.tdn}"` +
-        ` title="${esc(f.tdn)}">${await iconImg(f.tdn)}${await qualityBadge(f.quality)}` +
-        `${fmt(f.perMin * 60)}</button>`))).join('');
+    const flows = (await Promise.all(row.flows.map(async (f) => {
+      const logi = logiTitle(logiFor(f.tdn, f.perMin));
+      return `<button class="flow chip ${f.perMin >= 0 ? 'pos' : 'neg'}" data-goods="${f.tdn}"` +
+        ` title="${esc(f.tdn)}${logi ? ' — ' + esc(logi) : ''}">` +
+        `${await iconImg(f.tdn)}${await qualityBadge(f.quality)}` +
+        `${fmt(f.perMin * 60)}</button>`;
+    }))).join('');
     const entity = row.entity && row.entity.tdn ? `<button class="entity chip" data-config="${i}"` +
         ` title="${esc(row.entity.locName)} — click to change building, fuel, modules">` +
         `${await iconImg(row.entity.tdn)}${await qualityBadge(row.entity.quality)}<span class="amt">×${fmt(row.buildings)}</span>` +
@@ -580,7 +678,7 @@ async function renderSolve(result) {
     return `<span class="pill${bad ? ' bad' : ''}${algo ? ' loose' : ''}" title="${bad ? 'unmatched — needs both a producer and a consumer in-table' : 'matched'}">
         <button class="chip" data-goods="${l.tdn}">${esc(l.name)}${await qualityBadge(l.quality)}</button>
         <button class="small ghost algo" data-algo="${key}" title="${ALGO[algo].label}">${ALGO[algo].symbol}</button>
-        <span class="amt">${fmt(l.flow * 60)}/min</span>${unlink}</span>`;
+        <span class="amt">${fmt(l.flow * 60)}/min</span>${logiChip(l.tdn, l.flow)}${unlink}</span>`;
   }));
   $('#links').innerHTML = linkPills.join('') || '<span class="muted">—</span>';
   for (const btn of $('#links').querySelectorAll('[data-unlink]')) {
@@ -608,6 +706,7 @@ async function renderSolve(result) {
         const qualityTdn = f.quality && f.quality.level > 0 ? f.quality.tdn : '';
         return `<div class="row">${await iconImg(f.tdn)}` +
         `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin * 60)}/min</span>` +
+        `${logiChip(f.tdn, f.perMin)}` +
         `<button class="chip" data-goods="${f.tdn}">${esc(f.name)}${await qualityBadge(f.quality)}</button>` +
         `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}"` +
         ` data-quality="${qualityTdn}">${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
@@ -697,6 +796,10 @@ async function renderRecipeList(title, allEntries, header = '', rowQuality = '')
   for (const btn of $('#recipeInfo').querySelectorAll('[data-add]')) {
     btn.onclick = () => {
       rows.push({ tdn: btn.dataset.add, quality: rowQuality || undefined });
+      // Recipe chosen: the search that led here is done — clear it so the
+      // box is ready for the next hunt (the producers list stays up).
+      $('#search').value = '';
+      $('#results').innerHTML = '';
       rebuildAndSolve();
     };
   }
@@ -1455,6 +1558,9 @@ let milestones = [];  // [{tdn, locName, unlocked}] in discovery order
 async function pushMilestones() {
   const unlocked = milestones.filter((m) => m.unlocked).map((m) => m.tdn);
   milestones = await rpc('setMilestones', JSON.stringify({ unlocked }));
+  // The edited set belongs to the active project; the bundle-level copy
+  // stays as the default a fresh project/load starts from.
+  projSettings().milestones = unlocked;
   if (bundleKey) {
     localStorage.setItem(bundleKey + ':milestones', JSON.stringify(unlocked));
   }
@@ -1502,10 +1608,27 @@ let prodTechOptions = null;  // [{tdn, locName, bonusPerLevel, recipes}] per bun
 
 async function openProjectSettings() {
   prodTechOptions ??= await rpc('productivityOptions');
+  await getLogistics();
   const settings = projSettings();
   $('#setHideUnreachable').checked = !!settings.hideUnreachable;
   $('#setMiningProd').value = Math.round((settings.miningProductivity ?? 0) * 100);
   $('#setResearchProd').value = Math.round((settings.researchProductivity ?? 0) * 100);
+  // Logistics pickers: '' = auto (best milestone-reachable); the auto option
+  // names its current pick so the choice is legible.
+  const logiSelect = (el, list, selected, describe) => {
+    const auto = pickLogi(list, '');
+    el.innerHTML = `<option value="">auto — ${auto ? esc(auto.locName) : 'none'}</option>` +
+        (list ?? []).map((o) =>
+            `<option value="${o.tdn}" ${o.tdn === selected ? 'selected' : ''}>` +
+            `${esc(o.locName)} (${describe(o)})${o.milestone ? ' 🔒' : ''}</option>`).join('');
+  };
+  logiSelect($('#setDefaultBelt'), logistics?.belts, settings.defaultBelt ?? '',
+             (b) => `${fmt(b.itemsPerSecond)}/s`);
+  logiSelect($('#setDefaultInserter'), logistics?.inserters, settings.defaultInserter ?? '',
+             (i) => `${(1 / i.swingTime).toFixed(1)} swings/s${i.bulk ? ', bulk' : ''}`);
+  $('#setInserterCapacity').value = settings.inserterCapacity ?? 0;
+  $('#setInserterCapacity').placeholder =
+      String(inserterCapacityOf(pickLogi(logistics?.inserters, settings.defaultInserter ?? '')));
   // The unreachable filter applies here too (a hidden tech keeps its saved
   // level — the Done handler folds unseen inputs back from current settings).
   const rowsHtml = await Promise.all(reachable(prodTechOptions).map(async (t) => {
@@ -1529,6 +1652,9 @@ $('#projectSettingsDone').onclick = () => {
   settings.hideUnreachable = $('#setHideUnreachable').checked;
   settings.miningProductivity = Math.max(0, (+$('#setMiningProd').value || 0) / 100);
   settings.researchProductivity = Math.max(0, (+$('#setResearchProd').value || 0) / 100);
+  settings.defaultBelt = $('#setDefaultBelt').value;
+  settings.defaultInserter = $('#setDefaultInserter').value;
+  settings.inserterCapacity = Math.max(0, Math.round(+$('#setInserterCapacity').value || 0));
   // Start from saved levels so techs hidden from the list (unreachable
   // filter) keep theirs; visible inputs then overwrite/remove.
   const levels = { ...(settings.productivityLevels ?? {}) };
@@ -1555,16 +1681,19 @@ $('#milestonesAll').onclick = () => setAllMilestones(true);
 $('#milestonesNone').onclick = () => setAllMilestones(false);
 $('#milestonesDone').onclick = () => $('#milestonesDialog').close();
 $('#milestonesDialog').onclose = () => {
-  // Persist even when untouched so the dialog only auto-opens once per pack.
+  // Persist even when untouched so the dialog only auto-opens once per pack,
+  // and stamp the set onto the active project (per-project milestones).
+  const unlocked = milestones.filter((m) => m.unlocked).map((m) => m.tdn);
+  if (milestones.length > 0) projSettings().milestones = unlocked;
   if (bundleKey) {
-    localStorage.setItem(bundleKey + ':milestones', JSON.stringify(
-        milestones.filter((m) => m.unlocked).map((m) => m.tdn)));
+    localStorage.setItem(bundleKey + ':milestones', JSON.stringify(unlocked));
   }
   // Lock badges in the open search list may be stale now.
   const search = $('#search');
   if (search.value.trim().length >= 2) search.oninput({ target: search });
   refreshQualities();
   prodTechOptions = null;  // milestone lock badges in the list may be stale
+  logistics = null;        // reachability of belts/inserters too
   // Milestones cap how far quality upgrades chain (MaxAccessible), so the
   // solve itself can change with them.
   rebuildAndSolve();
@@ -1659,6 +1788,7 @@ async function loadBundleBuffer(buffer, label, packId) {
   lastProjectsJson = null;
   lastSnapshot = null;
   prodTechOptions = null;  // per-bundle: refetched on next settings open
+  logistics = null;
   updateUndoButtons();
   try {
     research = JSON.parse(localStorage.getItem(bundleKey + ':research')) ??
@@ -1710,6 +1840,9 @@ async function loadBundleBuffer(buffer, label, packId) {
     milestones = await rpc('setMilestones',
                            JSON.stringify({ unlocked: savedMilestones ?? [] }));
     renderMilestonesSummary();
+    // A project restored with its own milestone set overrides the
+    // bundle-level default that was just pushed.
+    await applyProjectMilestones();
     if (!Array.isArray(savedMilestones) && milestones.length > 0) openMilestones();
   }
   // After milestones (shared-link or local-restore path above already ran
@@ -1740,6 +1873,7 @@ $('#switchBtn').onclick = () => {
   milestones = [];
   qualities = [];
   prodTechOptions = null;
+  logistics = null;
   favorites = new Set();
   for (const id of ['shareBtn', 'exportBtn', 'importBtn', 'switchBtn']) {
     document.getElementById(id).disabled = true;
@@ -1795,6 +1929,14 @@ $('#installBtn').onclick = async () => {
   await installPrompt.userChoice;
   installPrompt = null;
   $('#installBtn').hidden = true;
+};
+
+// Test/debug hook: lets browser-automation poke the worker API and inspect
+// cached state without reaching into module scope. Not a public API.
+window.__mancosDebug = {
+  rpc,
+  logistics: () => logistics,
+  settings: () => projSettings(),
 };
 
 initPacks();
