@@ -654,12 +654,20 @@ std::unique_ptr<Database> LoadDatabase(const nlohmann::json& dump) {
       refs(e.at("technologyUnlock"), q->technologyUnlock);
       q->BeaconConsumptionFactor = e.at("beaconConsumption").get<float>();
       q->UpgradeChance = e.at("upgradeChance").get<float>();
-      // Bundles written before the Factorio 2.1 chain_probability split
-      // lack this field; 2.0's chaining rule (the tier's next_probability)
-      // is the right fallback for them. Bundles built from 2.1 data by the
-      // OLD bundler are unfixable here (they stored next_probability=1 and
-      // never saw chain_probability) — rebuild those with a current bundler.
-      q->ChainProbability = e.value("chainProbability", q->UpgradeChance);
+      // Bundles written before the Factorio 2.1 chain_probability split lack
+      // this field, and which fallback is right depends on the era of the
+      // GAME DATA they were built from — recoverable from upgradeChance:
+      //  - 2.0 data: next_probability ~0.1 per tier; the tier's own
+      //    next_probability IS the chaining rule -> chain = upgradeChance.
+      //  - 2.1 data through the old bundler: next_probability = 1 was baked
+      //    with no chain info; apply the engine's documented default,
+      //    chain_probability = clamp(next_probability * 0.1, 0, 1).
+      // The 0.5 threshold separates the two shapes (real data sits at ~0.1
+      // vs exactly 1). New bundles carry the field explicitly.
+      float up = q->UpgradeChance;
+      q->ChainProbability = e.value(
+          "chainProbability",
+          up >= 0.5f ? std::min(up * 0.1f, 1.0f) : up);
     }
   }
 #undef REF

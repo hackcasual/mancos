@@ -839,12 +839,18 @@ static std::string projectSaveAll(std::string stateJson) {
           page->content.AddLink({goods, quality}, goal.value("perMin", 0.0) / 60.0);
       link->algorithm = algoOf(goods->typeDotName());
     }
-    for (const json& tdn : p.value("linked", json::array())) {
-      auto* goods = dynamic_cast<Goods*>(
-          Db().FindByTypeDotName(tdn.get<std::string>()));
+    for (const json& entry : p.value("linked", json::array())) {
+      // Plain "Item.x", or "Item.x!Quality.y" for a quality-tiered link
+      // (the web mirror's key format; algo keys use the same string).
+      std::string key = entry.get<std::string>();
+      size_t bang = key.find('!');
+      std::string tdn = bang == std::string::npos ? key : key.substr(0, bang);
+      auto* goods = dynamic_cast<Goods*>(Db().FindByTypeDotName(tdn));
       if (goods != nullptr) {
-        page->content.AddLink({goods, Db().qualityNormal}, 0)->algorithm =
-            algoOf(goods->typeDotName());
+        Quality* quality = !goods->AcceptsQuality() || bang == std::string::npos
+            ? Db().qualityNormal
+            : ResolveQuality(key.substr(bang + 1));
+        page->content.AddLink({goods, quality}, 0)->algorithm = algoOf(key);
       }
     }
     for (const json& row : p.value("rows", json::array())) {
@@ -902,8 +908,13 @@ static std::string projectLoad(std::string text) {
     for (const auto& link : source.links) {
       if (link->goods.target == nullptr) continue;
       if (link->algorithm != LinkAlgorithm::Match) {
-        linkAlgos[link->goods.target->typeDotName()] =
-            static_cast<int>(link->algorithm);
+        // Algo keys use the linked-entry format: quality-suffixed when
+        // the link is quality-tiered (matches the web mirror's keys).
+        std::string key = link->goods.target->typeDotName();
+        if (link->goods.quality != nullptr && link->goods.quality != Db().qualityNormal) {
+          key += "!" + link->goods.quality->typeDotName();
+        }
+        linkAlgos[key] = static_cast<int>(link->algorithm);
       }
       if (link->amount != 0) {
         json goal{{"tdn", link->goods.target->typeDotName()},
@@ -913,6 +924,9 @@ static std::string projectLoad(std::string text) {
           goal["quality"] = link->goods.quality->typeDotName();
         }
         goals.push_back(std::move(goal));
+      } else if (link->goods.quality != nullptr && link->goods.quality != Db().qualityNormal) {
+        linked.push_back(link->goods.target->typeDotName() + "!" +
+                         link->goods.quality->typeDotName());
       } else {
         linked.push_back(link->goods.target->typeDotName());
       }

@@ -155,6 +155,17 @@ const projSettings = () => projects[activeProject].settings ??= defaultSettings(
 // mancos display preference, not a desktop-compatible model field).
 const hideUnreachable = () => !!projSettings().hideUnreachable;
 const reachable = (list) => hideUnreachable() ? list.filter((o) => !o.inaccessible) : list;
+
+// Linked-goods entries: plain "Item.x" for Normal, "Item.x!Quality.y" for a
+// quality-tiered link (also the linkAlgos key format). '!' never appears in
+// typeDotNames, so the split is unambiguous.
+const linkedKey = (tdn, qualityTdn) =>
+    qualityTdn ? `${tdn}!${qualityTdn}` : tdn;
+function parseLinked(entry) {
+  const bang = entry.indexOf('!');
+  return bang < 0 ? { tdn: entry, quality: '' }
+                  : { tdn: entry.slice(0, bang), quality: entry.slice(bang + 1) };
+}
 // Sparse {tdn: 1|2}: 1 = over-production allowed, 2 = over-consumption
 // allowed; absent = exact match (desktop per-link setting).
 const linkAlgoOf = (tdn) => pages[activePage].linkAlgos?.[tdn] ?? 0;
@@ -359,7 +370,10 @@ async function rebuildAndSolve() {
   for (const goal of goals) {
     await rpc('tableAddLink', goal.tdn, goal.perMin / 60, linkAlgoOf(goal.tdn), goal.quality ?? '');
   }
-  for (const tdn of linked) await rpc('tableAddLink', tdn, 0, linkAlgoOf(tdn), '');
+  for (const entry of linked) {
+    const { tdn, quality } = parseLinked(entry);
+    await rpc('tableAddLink', tdn, 0, linkAlgoOf(entry), quality);
+  }
   // Rows carry per-project choices ('' / missing = favorite-or-first
   // defaults): a reactor burning mox vs uranium cells is a different chain.
   for (const row of rows) {
@@ -547,20 +561,22 @@ async function renderSolve(result) {
     { symbol: '≤', label: 'Over-consumption allowed — click for exact match' },
   ];
   const linkPills = await Promise.all(result.links.map(async (l) => {
-    const isGoal = goals.some((g) => g.tdn === l.tdn);
+    const qualityTdn = l.quality && l.quality.level > 0 ? l.quality.tdn : '';
+    const key = linkedKey(l.tdn, qualityTdn);
+    const isGoal = goals.some((g) => g.tdn === l.tdn && (g.quality ?? '') === qualityTdn);
     const bad = (l.flags & 1) !== 0;
     const algo = l.algo ?? 0;
     const unlink = isGoal ? '' :
-        `<button class="x" data-unlink="${l.tdn}" aria-label="Unlink">✕</button>`;
+        `<button class="x" data-unlink="${key}" aria-label="Unlink">✕</button>`;
     return `<span class="pill${bad ? ' bad' : ''}${algo ? ' loose' : ''}" title="${bad ? 'unmatched — needs both a producer and a consumer in-table' : 'matched'}">
         <button class="chip" data-goods="${l.tdn}">${esc(l.name)}${await qualityBadge(l.quality)}</button>
-        <button class="small ghost algo" data-algo="${l.tdn}" title="${ALGO[algo].label}">${ALGO[algo].symbol}</button>
+        <button class="small ghost algo" data-algo="${key}" title="${ALGO[algo].label}">${ALGO[algo].symbol}</button>
         <span class="amt">${fmt(l.flow * 60)}/min</span>${unlink}</span>`;
   }));
   $('#links').innerHTML = linkPills.join('') || '<span class="muted">—</span>';
   for (const btn of $('#links').querySelectorAll('[data-unlink]')) {
     btn.onclick = () => {
-      pages[activePage].linked = linked.filter((tdn) => tdn !== btn.dataset.unlink);
+      pages[activePage].linked = linked.filter((entry) => entry !== btn.dataset.unlink);
       setLinkAlgo(btn.dataset.unlink, 0);
       bindActivePage();
       rebuildAndSolve();
@@ -573,22 +589,20 @@ async function renderSolve(result) {
     };
   }
 
-  // Off-table flows with candidate auto-pull. Pull/link-only only target
-  // Normal quality for now (the "linked" list has no quality dimension yet);
-  // a non-Normal surplus/import still shows, just without those actions.
+  // Off-table flows with candidate auto-pull. Quality-tiered flows link at
+  // their tier; the auto-pulled recipe row inherits that tier as its recipe
+  // quality (a producer crafts at it, a consumer consumes at it).
   const flowRows = await Promise.all(result.flows
       .filter((f) => Math.abs(f.perMin) > 1e-9)
       .sort((a, b) => a.perMin - b.perMin)
       .map(async (f) => {
-        const actionable = !f.quality || f.quality.level === 0;
+        const qualityTdn = f.quality && f.quality.level > 0 ? f.quality.tdn : '';
         return `<div class="row">${await iconImg(f.tdn)}` +
         `<span class="amt ${f.perMin > 0 ? 'pos' : 'neg'}">${fmt(f.perMin * 60)}/min</span>` +
         `<button class="chip" data-goods="${f.tdn}">${esc(f.name)}${await qualityBadge(f.quality)}</button>` +
-        (actionable
-            ? `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}">` +
-              `${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
-              `<button class="small ghost" data-link="${f.tdn}">link only</button>`
-            : `<span class="muted" style="font-size:12px">set a demand to link this quality</span>`) +
+        `<button class="small" data-pull="${f.tdn}" data-side="${f.perMin < 0 ? 'p' : 'c'}"` +
+        ` data-quality="${qualityTdn}">${f.perMin < 0 ? 'produce ▸' : 'consume ▸'}</button>` +
+        `<button class="small ghost" data-link="${linkedKey(f.tdn, qualityTdn)}">link only</button>` +
         `</div>`;
       }));
   $('#flows').innerHTML = flowRows.join('') || '<span class="muted">—</span>';
@@ -596,12 +610,15 @@ async function renderSolve(result) {
     btn.onclick = () => { linked.push(btn.dataset.link); rebuildAndSolve(); };
   }
   for (const btn of $('#flows').querySelectorAll('[data-pull]')) {
-    btn.onclick = () => pullCandidates(btn.dataset.pull, btn.dataset.side === 'p');
+    btn.onclick = () => pullCandidates(btn.dataset.pull, btn.dataset.side === 'p',
+                                       btn.dataset.quality);
   }
 }
 
 // ---- candidate auto-pull ----
-const inTable = (tdn) => goals.some((g) => g.tdn === tdn) || linked.includes(tdn);
+const inTable = (tdn, qualityTdn = '') =>
+    goals.some((g) => g.tdn === tdn && (g.quality ?? '') === qualityTdn) ||
+    linked.includes(linkedKey(tdn, qualityTdn));
 
 // Desktop yafc's core gesture: click any goods, anywhere, to explore it.
 document.addEventListener('click', (e) => {
@@ -615,8 +632,11 @@ document.addEventListener('click', (e) => {
   showGoods(el.dataset.goods);
 });
 
-async function pullCandidates(tdn, wantProducers) {
-  if (!inTable(tdn)) linked.push(tdn);
+// qualityTdn '' = Normal. Pulling a non-Normal flow links that tier and sets
+// the added row's recipe quality to it, so the new row's products (producer
+// side) or ingredients (consumer side) bind to the tiered link.
+async function pullCandidates(tdn, wantProducers, qualityTdn = '') {
+  if (!inTable(tdn, qualityTdn)) linked.push(linkedKey(tdn, qualityTdn));
   const info = await rpc('goodsInfo', tdn);
   const list = wantProducers ? info.producers : info.consumers;
   // API pre-sorts: available first, then yafc cost ascending. Auto-pick never
@@ -625,14 +645,14 @@ async function pullCandidates(tdn, wantProducers) {
   const available = list.filter((r) =>
       r.available !== false && !r.milestone && !r.inaccessible && !r.special);
   if (available.length === 1) {
-    rows.push({ tdn: available[0].tdn });
+    rows.push({ tdn: available[0].tdn, quality: qualityTdn || undefined });
     await rebuildAndSolve();
     return;
   }
   await rebuildAndSolve();
   renderRecipeList(
       `${wantProducers ? 'Produce' : 'Consume'} ${info.goods.locName} — pick a recipe`,
-      list);
+      list, '', qualityTdn);
 }
 
 // Milestone/accessibility badge (desktop paints the milestone icon on locked
@@ -648,7 +668,7 @@ async function lockBadge(o) {
   return '';
 }
 
-async function renderRecipeList(title, allEntries, header = '') {
+async function renderRecipeList(title, allEntries, header = '', rowQuality = '') {
   const list = reachable(allEntries);
   const hiddenNote = allEntries.length !== list.length
       ? `<div class="muted" style="font-size:12px;padding:2px 0">${allEntries.length - list.length} unreachable hidden (project settings)</div>`
@@ -666,7 +686,10 @@ async function renderRecipeList(title, allEntries, header = '') {
   $('#recipeInfo').innerHTML =
       `${header}<div class="eyebrow">${esc(title)}</div>` + hiddenNote + items.join('');
   for (const btn of $('#recipeInfo').querySelectorAll('[data-add]')) {
-    btn.onclick = () => { rows.push({ tdn: btn.dataset.add }); rebuildAndSolve(); };
+    btn.onclick = () => {
+      rows.push({ tdn: btn.dataset.add, quality: rowQuality || undefined });
+      rebuildAndSolve();
+    };
   }
 }
 
