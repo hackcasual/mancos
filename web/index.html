@@ -312,6 +312,14 @@
         <button id="milestonesBtn" class="small">Milestones…</button>
         <span id="milestonesSummary" class="muted mono"></span>
       </div>
+      <div id="qualityLevels" hidden>
+        <div class="eyebrow">Quality levels</div>
+        <div id="qualityLevelList" class="list"></div>
+        <div class="muted" style="font-size:12px">
+          Locked tiers can't be produced: quality upgrades stop at the highest
+          available tier, which absorbs the rest of the upgrade chance.
+        </div>
+      </div>
       <label class="row">
         <input type="checkbox" id="researchFilter">
         <span>Only offer researched recipes</span>
@@ -412,8 +420,9 @@
   <div id="milestoneGrid"></div>
   <div class="muted" style="font-size:12.5px">
     Anything locked behind an unselected milestone is shown with that
-    milestone's icon and sorted below reachable recipes. It is never hidden,
-    and the solver is unaffected.
+    milestone's icon and sorted below reachable recipes. Quality upgrades
+    stop at the highest tier your milestones allow; everything else stays
+    visible and solvable.
   </div>
   <div class="foot">
     <button id="milestonesAll" class="small ghost">All</button>

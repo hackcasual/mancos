@@ -109,6 +109,11 @@ struct ProductionSettings {
   // Database::qualityNormal, injected by the caller (nullptr in tests/tools
   // that never touch quality — see RecipeParameters::quality/qualityNormal).
   Quality* qualityNormal = nullptr;
+  // Highest quality tier reachable with current milestones (upstream
+  // Quality.MaxAccessible): the upgrade-chance walk stops here and this tier
+  // absorbs the tail probability — an epic craft cannot land legendary items
+  // while legendary is still locked. nullptr = no cap (whole data chain).
+  Quality* maxAccessibleQuality = nullptr;
 };
 
 struct RecipeParameters {
@@ -130,6 +135,7 @@ struct RecipeParameters {
   // change (single untagged-quality resolution, as before this was ported).
   Quality* quality = nullptr;
   Quality* qualityNormal = nullptr;
+  Quality* maxAccessibleQuality = nullptr;  // from ProductionSettings
 
   float productivity() const { return activeEffects.productivity; }
   float fuelUsagePerSecondPerRecipe() const {

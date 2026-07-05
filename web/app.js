@@ -1331,6 +1331,33 @@ const qualityLocked = (q) => q.inaccessible ? ' \u{1F6AB}' : q.milestone ? ' \u{
 const hasSelectableQualities = () => qualities.some((q) => q.level > 0 && !q.inaccessible);
 async function refreshQualities() {
   qualities = await rpc('qualityList');
+  await renderQualityLevels();
+}
+
+// Research tab: the quality tiers and whether the current milestones allow
+// producing them. Producible = every tier from Normal up to it is reachable
+// (the solver's MaxAccessible cap — upgrades can't skip a locked tier).
+async function renderQualityLevels() {
+  const section = $('#qualityLevels');
+  const tiers = qualities.filter((q) => !q.inaccessible);
+  if (tiers.filter((q) => q.level > 0).length === 0) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  let chainOpen = true;  // walks Normal upward; a locked tier closes the chain
+  const rowsHtml = await Promise.all(tiers.map(async (q) => {
+    chainOpen = chainOpen && !q.milestone;
+    const state = chainOpen
+        ? '<span class="pos">✓ available</span>'
+        : q.milestone
+            ? `<span class="muted">🔒 needs ${esc(q.milestone.locName)}</span>`
+            : '<span class="muted">🔒 beyond a locked tier</span>';
+    return `<div class="row">${await iconImg(q.tdn)}
+       <span style="flex:1">${esc(q.locName)}</span>
+       <span style="font-size:12.5px">${state}</span></div>`;
+  }));
+  $('#qualityLevelList').innerHTML = rowsHtml.join('');
 }
 function qualitySelectHtml(selectedTdn) {
   return reachable(qualities).map((q) =>
@@ -1453,6 +1480,9 @@ $('#milestonesDialog').onclose = () => {
   if (search.value.trim().length >= 2) search.oninput({ target: search });
   refreshQualities();
   prodTechOptions = null;  // milestone lock badges in the list may be stale
+  // Milestones cap how far quality upgrades chain (MaxAccessible), so the
+  // solve itself can change with them.
+  rebuildAndSolve();
 };
 
 // ---- bundle loading ----
@@ -1600,6 +1630,10 @@ async function loadBundleBuffer(buffer, label, packId) {
   // EnsureMilestones in the worker) so this doesn't trigger the accessibility
   // walk any earlier than the existing deferred-milestones ordering intends.
   await refreshQualities();
+  // The first solve above ran before the milestone analysis existed, so it
+  // used an uncapped quality chain; re-solve now that MaxAccessible is known.
+  // Only worth it when the restored table actually has content.
+  if (goals.length + linked.length + rows.length > 0) rebuildAndSolve();
 }
 
 // ---- switch pack: close the current project, back to the chooser ----
@@ -1631,6 +1665,7 @@ $('#switchBtn').onclick = () => {
   $('#recipeInfo').innerHTML = '';
   $('#techResults').innerHTML = '';
   $('#milestonesSummary').textContent = '';
+  $('#qualityLevels').hidden = true;
   updateUndoButtons();
   $('#workspace').hidden = true;
   $('#dropHint').hidden = false;

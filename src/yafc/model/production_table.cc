@@ -22,13 +22,19 @@ namespace {
 // where ChainProbability is 2.1's chain_probability, or (for 2.0 data) the
 // reached tier's own next_probability — the 2.0 chaining rule.
 //
-// Milestone-gating the top of this walk (upstream Quality.MaxAccessible) is
-// not ported yet: this walks the full quality chain the loaded data defines.
-std::vector<std::pair<Quality*, double>> QualityDistribution(Quality* base, double qualityMod) {
+// The walk stops at maxAccessible (upstream Quality.MaxAccessible — the
+// highest milestone-reachable tier), which then absorbs the tail
+// probability: with legendary locked, an upgrade that "would" have gone
+// legendary lands at epic, exactly like the game. nullptr = no cap.
+std::vector<std::pair<Quality*, double>> QualityDistribution(
+    Quality* base, double qualityMod, Quality* maxAccessible) {
   std::vector<double> probabilityAtLeast{1.0};
   if (qualityMod > 0 && base != nullptr) {
     double running = 1.0;
-    for (Quality* q = base; q->nextQuality != nullptr; q = q->nextQuality) {
+    for (Quality* q = base;
+         q->nextQuality != nullptr &&
+         (maxAccessible == nullptr || q->level < maxAccessible->level);
+         q = q->nextQuality) {
       running *= q == base ? q->UpgradeChance : q->ChainProbability;
       probabilityAtLeast.push_back(std::min(1.0, running * qualityMod));
     }
@@ -55,7 +61,8 @@ std::vector<std::pair<Quality*, double>> ProductQualitySpread(const Goods* goods
   if (!goods->AcceptsQuality() || params.quality == nullptr) {
     return {{params.qualityNormal, 1.0}};
   }
-  return QualityDistribution(params.quality, params.activeEffects.qualityMod());
+  return QualityDistribution(params.quality, params.activeEffects.qualityMod(),
+                             params.maxAccessibleQuality);
 }
 
 // Ingredients don't spread across qualities — a row consumes one concrete

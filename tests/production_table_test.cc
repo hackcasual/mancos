@@ -348,6 +348,57 @@ TEST_CASE("quality: module upgrade chance spreads products across quality links"
   CHECK(plateRare == doctest::Approx(1));
 }
 
+TEST_CASE("quality: max accessible tier absorbs the upgrade tail (locked tiers unreachable)") {
+  std::vector<std::unique_ptr<FactorioObject>> objects;
+  Item* ore = Add<Item>(objects, "ore");
+  Item* plate = Add<Item>(objects, "plate");
+  auto* qualityModule = Add<Module>(objects, "quality-module");
+  qualityModule->moduleSpecification.baseQuality = 0.2f;
+  Recipe* smelt = Add<Recipe>(objects, "smelt");
+  smelt->time = 1;
+  smelt->allowedEffects = AllowedEffects::kAll;
+  smelt->ingredients.emplace_back(ore, 1.0f);
+  smelt->products.emplace_back(plate, 1.0f);
+  auto* furnace = Add<EntityCrafter>(objects, "furnace");
+  furnace->allowedEffects = AllowedEffects::kAll;
+  furnace->moduleSlots = 1;
+  furnace->baseCraftingSpeed = 1;
+  auto* normal = Add<Quality>(objects, "normal");
+  normal->level = 0;
+  normal->UpgradeChance = 1.0f;
+  auto* uncommon = Add<Quality>(objects, "uncommon");
+  uncommon->level = 1;
+  uncommon->ChainProbability = 0.5f;
+  auto* rare = Add<Quality>(objects, "rare");
+  rare->level = 2;
+  normal->nextQuality = uncommon;
+  uncommon->previousQuality = normal;
+  uncommon->nextQuality = rare;
+  rare->previousQuality = uncommon;
+  Database db;
+  db.LoadBuiltData(std::move(objects));
+
+  ProductionTable root;
+  root.settings.qualityNormal = normal;
+  root.settings.maxAccessibleQuality = uncommon;  // rare is milestone-locked
+  RecipeRow* row = root.AddRecipe(smelt);
+  row->entity = {furnace, normal};
+  row->modules.list = {{qualityModule, 0}};
+  row->fixedRate = 10;
+
+  root.AddLink({ore, normal});
+  ProductionLink* normalLink = root.AddLink({plate, normal});
+  ProductionLink* uncommonLink = root.AddLink({plate, uncommon});
+  ProductionLink* rareLink = root.AddLink({plate, rare});
+
+  REQUIRE(root.Solve() == TableSolveResult::Ok);
+  // Uncapped this would be 8/1/1 (see the spread test above); with rare
+  // locked, uncommon absorbs the tail: 8 normal, 2 uncommon, 0 rare.
+  CHECK(normalLink->linkFlow == doctest::Approx(8));
+  CHECK(uncommonLink->linkFlow == doctest::Approx(2));
+  CHECK(rareLink->linkFlow == doctest::Approx(0));
+}
+
 TEST_CASE("quality: a target tier with no quality module produces 100% at that tier") {
   std::vector<std::unique_ptr<FactorioObject>> objects;
   Item* ore = Add<Item>(objects, "ore");

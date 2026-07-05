@@ -179,6 +179,19 @@ Quality* ResolveQuality(const std::string& tdn) {
   return Db().qualityNormal;
 }
 
+// Upstream Quality.MaxAccessible: the highest tier whose whole chain from
+// Normal is reachable with current milestones. nullptr = no cap (either no
+// quality chain, or the milestone analysis hasn't run yet — first solve).
+Quality* MaxAccessibleQuality() {
+  Quality* q = Db().qualityNormal;
+  if (q == nullptr || g_milestones == nullptr) return nullptr;
+  while (q->nextQuality != nullptr &&
+         g_milestones->IsAccessibleWithCurrentMilestones(q->nextQuality)) {
+    q = q->nextQuality;
+  }
+  return q;
+}
+
 json QualityBrief(const Quality* q) {
   if (q == nullptr) return nullptr;
   json brief{{"tdn", q->typeDotName()}, {"locName", q->locName}, {"level", q->level}};
@@ -587,6 +600,10 @@ static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
 
 static std::string tableSolve() {
   if (g_bundle == nullptr) return Err("no bundle loaded");
+  // Recomputed every solve: the milestone set can change between solves and
+  // caps how far quality upgrades can chain (an epic craft must not produce
+  // legendary items while legendary is locked).
+  g_table->settings.maxAccessibleQuality = MaxAccessibleQuality();
   TableSolveResult result = g_table->Solve();
   json rows = json::array();
   for (const auto& row : g_table->recipes) {

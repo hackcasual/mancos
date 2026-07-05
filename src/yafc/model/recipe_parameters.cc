@@ -114,6 +114,7 @@ RecipeParameters RecipeParameters::Calculate(const RecipeRow& row,
 
   result.qualityNormal = settings.qualityNormal;
   result.quality = row.quality != nullptr ? row.quality : settings.qualityNormal;
+  result.maxAccessibleQuality = settings.maxAccessibleQuality;
 
   if (recipe == nullptr) {
     result.recipeTime = 1;
