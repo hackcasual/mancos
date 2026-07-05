@@ -499,6 +499,29 @@ Recipe + status: `solver-wasm/README.md`.
    tolerant dump reader. Not done: beacons are not placed in the blueprint (row beacon
    configs are ignored by the exporter); no belts/inserters/power poles (pure building
    blocks); no per-row selection UI (whole page only).
+   Increment 15 (2026-07-05): building-quality picker ("Building quality" section in the
+   row dialog, +30%/level speed via the pre-existing CraftingSpeed(quality) math the web
+   layer never fed; .yafc quality-wrapped entity refs; badge on the entity chip); quality
+   affordances fully hidden on quality-disabled packs (hasSelectableQualities gating
+   audited in-browser on Py); OG/twitter meta on index.html; opt-in self-updater in the
+   node bundler launcher (release workflow stamps the tag; prompt-only on TTY, tar/unzip
+   extraction, --no-update-check + MANCOS_BUNDLER_NO_UPDATE=1 opt-outs — verified against
+   the live v0.1.3 release, needs a new tag to go live); pack name shown next to Switch
+   pack; per-project hideUnreachable display setting (filters 🚫 from search/recipe
+   lists/quality pickers/prod-tech list; 🔒 stays). USER BUG (screenshots, hosted 2.1
+   pack): quality spread showed only Normal+Legendary and a tiered goal never matched —
+   the predicted pre-fix-bundle failure from Increment 13. Fixed WITHOUT bundle rebuilds:
+   the dump reader reconstructs ChainProbability for old bundles from upgradeChance's
+   shape (~0.1 → 2.0 rule: chain = upgradeChance; 1.0 → old-bundler 2.1 data: chain =
+   upgradeChance x 0.1, the engine's documented default; 0.5 threshold separates the
+   eras). Plus quality-aware flow linking: `linked` entries (and linkAlgos keys) carry
+   "Item.x!Quality.y" for non-Normal tiers, produce/consume/link-only now work on tiered
+   surpluses, and auto-pulled rows inherit the flow's tier as recipe quality; projectSave/
+   Load round-trips the suffixed entries. Verified the user's exact scenario end-to-end
+   in-browser on the unmodified hosted-format bundle: 300/min uncommon PSP + 4x q3
+   modules -> 1111 crafts/min, five-tier spread, goal matched, tiered surpluses
+   actionable. Caveat: the era heuristic can misjudge exotic modded quality chains in OLD
+   bundles only (new bundles carry chainProbability explicitly).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.
