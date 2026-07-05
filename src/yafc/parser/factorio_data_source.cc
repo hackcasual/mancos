@@ -472,10 +472,41 @@ ParseResult FactorioDataSource::Parse(
     lua_pop(L, 1);
   }
 
-  report("running data stage");
   int definesRef =
       lua.ExecEnvFile("Defines" + factorioVersion.ToString2() + ".lua", "defines");
   lua.ExecEnvFile("Sandbox.lua", "pre", definesRef);
+
+  // Settings stage: mods define their startup settings here, and their data
+  // stage reads them via settings.startup[...].value — without this, any mod
+  // with startup settings crashes when no mod-settings.dat is available
+  // (e.g. building from a mod repo checkout instead of a game install).
+  // Setting prototypes accumulate in data.raw, which is reset afterwards so
+  // the data stage starts clean, exactly like the game. Values from
+  // mod-settings.dat (parsed above into `settings`) override the defaults.
+  report("running settings stage");
+  lua.DoModFiles(modLoadOrder, "settings.lua", progress);
+  lua.DoModFiles(modLoadOrder, "settings-updates.lua", progress);
+  lua.DoModFiles(modLoadOrder, "settings-final-fixes.lua", progress);
+  lua.Exec(R"lua(
+    local fromDat = settings or {}
+    local out = {startup = {}, ["runtime-global"] = {}, ["runtime-per-user"] = {}}
+    for _, kind in pairs({"bool-setting", "int-setting", "double-setting",
+                          "string-setting", "color-setting"}) do
+      for name, proto in pairs(data.raw[kind] or {}) do
+        local scope = out[proto.setting_type]
+        if scope then scope[name] = {value = proto.default_value} end
+      end
+    end
+    for scopeName, values in pairs(fromDat) do
+      if out[scopeName] and type(values) == "table" then
+        for name, v in pairs(values) do out[scopeName][name] = v end
+      end
+    end
+    settings = out
+    data.raw = {}
+  )lua", "core", "settings-defaults");
+
+  report("running data stage");
   lua.DoModFiles(modLoadOrder, "data.lua", progress);
   lua.DoModFiles(modLoadOrder, "data-updates.lua", progress);
   lua.DoModFiles(modLoadOrder, "data-final-fixes.lua", progress);

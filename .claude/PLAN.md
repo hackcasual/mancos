@@ -565,6 +565,23 @@ Recipe + status: `solver-wasm/README.md`.
    settings}. Testing traps: python http.server sends no Cache-Control, so Chrome
    heuristic-caches app.js between rebuilds within a browser session — disable cache or
    use a fresh profile per build.
+   Increment 17b (2026-07-05): bundler runs Factorio's settings stage (settings.lua /
+   -updates / -final-fixes after Defines+Sandbox, synthesizing settings.startup/
+   runtime-* from the collected setting prototypes' default_value, mod-settings.dat
+   values overriding, then data.raw reset for the data stage) — previously any mod
+   reading settings.startup crashed without a .dat (alien-biomes, pycoalprocessing,
+   K2). Enables building bundles from mod REPO checkouts + factorio headless with no
+   game install. Used it to rebuild all remaining hosted packs with throughput data
+   (staged in ~/git/mancos-data, NOT pushed — user manages publishing): Nullius,
+   Py Hard Mode (pyhardmode 1.3.37 — 1.3.38 was never tagged on GitHub), Krastorio
+   2.0 + 2.1 from codeberg raiguard/{Krastorio2,Krastorio2Assets,
+   Krastorio2MenuSimulations,ChangeInserterDropLane,flib} + github Polka37/
+   {Krastorio2-spaced-out,k2so-assets} + notnotmelon/pyhardmode at exact hosted tags
+   (source archives extracted as ModName_version folders — folder mods are supported).
+   K2 2.1 icons grafted from the hosted bundle (headless has no base graphics; object
+   sets matched exactly). Default-settings deltas vs the user's builds are additive
+   and benign (alien-biomes vegetation tiles, K2 flare-stack burn/crush recipes).
+   All four verified loading+searching+logisticsOptions in-browser.
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.
