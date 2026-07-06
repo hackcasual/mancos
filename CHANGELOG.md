@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.6 — 2026-07-06
+
+- Belt and inserter throughput planning: item flows show belt counts on
+  links and off-table flows (full belt + inserter detail in tooltips).
+  Project settings pick a default belt and inserter — auto mode uses the
+  best milestone-reachable option and derives inserter hand size from
+  stacking research, with a manual capacity override.
+- Milestones are per project: each project keeps its own set, switching
+  projects applies it, and creating a project asks for milestones again.
+- Demand is set directly: type a rate in the goods panel (negative =
+  consume, empty = remove), with an inline quality selector on quality
+  packs. Page tabs auto-label themselves with the first demanded good's
+  icon and name until renamed; the add-page button is front and left.
+- Producers lists show recipes as icon chips; unavailable recipes always
+  sort to the bottom; module palettes order productivity → speed →
+  quality → efficiency, and building pickers sink locked machines.
+- Bundles built by newer bundlers no longer fail to load on older cached
+  apps (unknown entity kinds degrade gracefully).
+- Bundler: runs Factorio's settings stage, so packs whose mods need
+  startup settings build without a mod-settings.dat — including straight
+  from mod repository checkouts plus headless game data.
+
 ## v0.1.5 — 2026-07-05
 
 - Quality upgrades now stop at the highest tier your milestones allow, with
