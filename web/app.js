@@ -406,19 +406,28 @@ function renderProjectSelect() {
   $('#removeProject').hidden = projects.length < 2;
 }
 
-function renderPageTabs() {
+async function renderPageTabs() {
   renderProjectSelect();
-  const tabs = pages.map((p, i) =>
-      `<button class="small${i === activePage ? '' : ' ghost'}" data-page="${i}"
-         title="Double-click to rename">${esc(p.name)}</button>`).join('');
-  $('#pageTabs').innerHTML = tabs +
-      ` <button class="small ghost" id="addPage" title="Add page">+</button>` +
+  // Tabs the user hasn't renamed label themselves by the page's first
+  // demanded good (icon + name); manual names (dblclick) always win.
+  const tabLabel = async (p) => {
+    if (p.named || !/^Page \d+$/.test(p.name)) return esc(p.name);
+    const goal = p.goals.find((g) => g.perMin >= 0) ?? p.goals[0];
+    if (!goal) return esc(p.name);
+    return `${await iconImg(goal.tdn)}${esc(goal.name)}`;
+  };
+  const tabs = (await Promise.all(pages.map(async (p, i) =>
+      `<button class="small${i === activePage ? '' : ' ghost'} tab" data-page="${i}"
+         title="Double-click to rename">${await tabLabel(p)}</button>`))).join('');
+  $('#pageTabs').innerHTML =
+      `<button class="small" id="addPage" title="Add page">+ Page</button>` + tabs +
       (pages.length > 1 ? ` <button class="x" id="removePage" title="Remove page">✕</button>` : '');
   for (const btn of $('#pageTabs').querySelectorAll('[data-page]')) {
     btn.onclick = () => setActivePage(+btn.dataset.page);
     btn.ondblclick = () => {
-      const name = prompt('Page name:', pages[+btn.dataset.page].name);
-      if (name) { pages[+btn.dataset.page].name = name; renderPageTabs(); persist(); }
+      const page = pages[+btn.dataset.page];
+      const name = prompt('Page name:', page.name);
+      if (name) { page.name = name; page.named = true; renderPageTabs(); persist(); }
     };
   }
   $('#addPage').onclick = () => {
@@ -721,6 +730,9 @@ async function renderSolve(result) {
     btn.onclick = () => pullCandidates(btn.dataset.pull, btn.dataset.side === 'p',
                                        btn.dataset.quality);
   }
+
+  // Auto-named tabs track the page's first demand — refresh after solves.
+  renderPageTabs();
 }
 
 // ---- candidate auto-pull ----
@@ -781,6 +793,9 @@ async function renderRecipeList(title, allEntries, header = '', rowQuality = '')
   const hiddenNote = allEntries.length !== list.length
       ? `<div class="muted" style="font-size:12px;padding:2px 0">${allEntries.length - list.length} unreachable hidden (project settings)</div>`
       : '';
+  // Ingredient/product lines as icon chips (amount × icon, name on hover).
+  const ioPart = async (x) =>
+      `<span class="iopart" title="${esc(x.name)}">${x.amount}×${await iconImg(x.tdn)}</span>`;
   const items = await Promise.all(list.map(async (r) =>
       `<div class="row"${r.inaccessible ? ' style="opacity:.55"' : ''}>${await iconImg(r.tdn)}` +
       `<span title="${esc(r.tdn)}">${esc(r.locName)}</span>` +
@@ -788,9 +803,9 @@ async function renderRecipeList(title, allEntries, header = '', rowQuality = '')
       `${r.available === false ? `<span title="requires: ${esc((r.unlockedBy || []).join(', '))}">\u{1F512}</span>` : ''}` +
       `${cost(r.cost)}<span class="muted mono">${r.time}s</span>` +
       `<button class="small" data-add="${r.tdn}">+ row</button></div>` +
-      `<div class="muted" style="margin-left:32px;font-size:12.5px">` +
-      `${r.in.map((x) => `${x.amount} ${esc(x.name)}`).join(', ') || 'no inputs'} → ` +
-      `${r.out.map((x) => `${x.amount} ${esc(x.name)}`).join(', ')}</div>`));
+      `<div class="muted iolist" style="margin-left:32px;font-size:12.5px">` +
+      `${(await Promise.all(r.in.map(ioPart))).join(' ') || 'no inputs'} → ` +
+      `${(await Promise.all(r.out.map(ioPart))).join(' ')}</div>`));
   $('#recipeInfo').innerHTML =
       `${header}<div class="eyebrow">${esc(title)}</div>` + hiddenNote + items.join('');
   for (const btn of $('#recipeInfo').querySelectorAll('[data-add]')) {
@@ -835,27 +850,57 @@ $('#search').oninput = async (e) => {
 
 async function showGoods(tdn) {
   const info = await rpc('goodsInfo', tdn);
-  await renderRecipeList(`Producers (${info.producers.length})`, info.producers,
-      `<div class="eyebrow">${esc(info.goods.locName)}</div>
-       <button id="goalBtn">Set demand…</button>`);
   // Fluids/Special goods never carry a quality tier (Factorio 2.0 rule), and
   // some packs disable the quality feature entirely (see hasSelectableQualities).
   const goodsAcceptsQuality = info.goods.kind !== 'Fluid' && info.goods.kind !== 'Special' &&
       hasSelectableQualities();
-  $('#goalBtn').onclick = () => {
-    openAmountDialog({
-      title: `Demand for ${info.goods.locName}`,
-      hint: 'Units per minute — negative = input goal: consume this much.',
-      value: 900,
-      quality: goodsAcceptsQuality ? { selected: undefined } : undefined,
-      onApply: (perMin, raw, qualityTdn) => {
-        if (!Number.isFinite(perMin) || perMin === 0) return false;
-        goals.push({ tdn, name: info.goods.locName, perMin, quality: qualityTdn });
-        rebuildAndSolve();
-        return true;
-      },
-    });
+  // Direct demand entry (replaces the old "Set demand…" dialog button):
+  // type a rate, Enter/blur applies. Negative = consume this much; clearing
+  // the box removes the goal. Quality-capable goods get an inline tier pick.
+  await renderRecipeList(`Producers (${info.producers.length})`, info.producers,
+      `<div class="eyebrow">${esc(info.goods.locName)}</div>
+       <div class="row" style="padding:0 0 6px">
+         <input type="number" id="goalInput" step="any" inputmode="decimal"
+                placeholder="demand" style="width:110px"
+                title="Units per minute — negative = consume this much; empty = remove the goal"
+                aria-label="Demand per minute">
+         <span class="muted">/min</span>
+         ${goodsAcceptsQuality ? '<select id="goalQuality" aria-label="Demand quality"></select>' : ''}
+       </div>`);
+  const input = $('#goalInput');
+  const qualitySelect = $('#goalQuality');
+  const selectedQuality = () => {
+    const value = qualitySelect?.value ?? '';
+    return value === qualities[0]?.tdn ? '' : value;  // Normal stores as unset
   };
+  const findGoal = () =>
+      goals.find((g) => g.tdn === tdn && (g.quality ?? '') === selectedQuality());
+  const syncFromGoal = () => { input.value = findGoal()?.perMin ?? ''; };
+  if (qualitySelect) {
+    qualitySelect.innerHTML = qualitySelectHtml(undefined);
+    qualitySelect.onchange = syncFromGoal;  // show that tier's existing demand
+  }
+  syncFromGoal();
+  let lastApplied = input.value;
+  const apply = () => {
+    if (input.value === lastApplied) return;
+    lastApplied = input.value;
+    const perMin = parseFloat(input.value);
+    const existing = findGoal();
+    if (!Number.isFinite(perMin) || perMin === 0) {
+      if (!existing) return;
+      goals.splice(goals.indexOf(existing), 1);
+    } else if (existing) {
+      existing.perMin = perMin;
+    } else {
+      goals.push({ tdn, name: info.goods.locName, perMin,
+                   quality: selectedQuality() || undefined });
+    }
+    if (window.innerWidth <= 760) closeSheet();
+    rebuildAndSolve();
+  };
+  input.onchange = apply;
+  input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } };
 }
 
 // ---- projects: import/export/share (human priorities 1+2) ----
@@ -1910,7 +1955,7 @@ const closeSheet = () => {
 };
 document.addEventListener('click', (e) => {
   if (window.innerWidth > 760) return;
-  if (e.target.matches('[data-add], #goalBtn')) closeSheet();
+  if (e.target.matches('[data-add]')) closeSheet();
 });
 
 // ---- app mode: installable + offline via the service worker ----

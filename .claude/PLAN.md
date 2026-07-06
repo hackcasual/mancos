@@ -581,7 +581,24 @@ Recipe + status: `solver-wasm/README.md`.
    K2 2.1 icons grafted from the hosted bundle (headless has no base graphics; object
    sets matched exactly). Default-settings deltas vs the user's builds are additive
    and benign (alien-biomes vegetation tiles, K2 flare-stack burn/crush recipes).
-   All four verified loading+searching+logisticsOptions in-browser.
+   All four verified loading+searching+logisticsOptions in-browser. (The user then
+   took over: renamed the whole hosted lineup 2026-07-05 and rebuilds everything on
+   their machine — never push to mancos-data; workflow fix 0b7cd52 split build/deploy
+   jobs so failed-job re-runs don't double the github-pages artifact.)
+   Increment 18 (2026-07-06, user directive batch): unnamed page tabs (name still
+   /^Page \d+$/ and no page.named flag) auto-label with the first demanded good's
+   icon+name, re-rendered after every solve; "+ Page" button solid and leftmost in
+   the tab strip; RecipeRank reordered so research-unavailable sinks below special
+   (available < special < unavailable < milestone-locked < inaccessible) and
+   rowOptions crafters sort locked-to-bottom by milestone unlock order; module
+   palette sorted productivity → speed → quality → efficiency (classified by
+   dominant effect sign), anything else by MilestoneRank(includeReached=true) —
+   MilestoneRank is now a shared helper (PickDefaultCrafter uses it too);
+   producers-list ingredient/product lines are icon chips (amount×icon, name on
+   hover — in/out briefs already carried tdn); the "Set demand…" dialog button is
+   replaced by a direct-entry box (Enter/blur applies, empty removes, negative =
+   consume, inline quality select on quality packs, box prefills the selected
+   tier's existing goal).
 2. Front-end stack: TypeScript; framework + rendering strategy decided by a spike on the
    production-table grid (DOM vs canvas for the big table; yafc's ImGui layout behavior as
    the spec). Icons: decode mod PNGs with browser APIs, composite layered icons on canvas.

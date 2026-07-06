@@ -7,6 +7,7 @@
 // icon PNG bytes cross as typed arrays.
 #include <algorithm>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -134,19 +135,36 @@ json RecipeBrief(const RecipeOrTechnology* r) {
   return brief;
 }
 
-// Candidate ordering (user directive): available first, then yafc cost.
-// Milestone gating stacks on top: reachable-now < research-locked <
-// beyond-current-milestones < statically inaccessible.
+// Candidate ordering (user directive): available first, then yafc cost, with
+// anything unavailable kept at the bottom of lists. Barreling/voiding/
+// stacking pseudo-recipes rank below real available production (desktop:
+// DataUtils sorts specialType != Normal last) — otherwise auto-pull happily
+// "produces" a fluid by emptying its own barrels — but research-locked,
+// milestone-locked and inaccessible entries sink below even those.
 int RecipeRank(const RecipeOrTechnology* r) {
   if (g_milestones != nullptr) {
     if (!g_milestones->IsAccessible(r)) return 4;
     if (!g_milestones->IsAccessibleWithCurrentMilestones(r)) return 3;
   }
-  // Barreling/voiding/stacking pseudo-recipes rank below real production
-  // (desktop: DataUtils sorts specialType != Normal last) — otherwise
-  // auto-pull happily "produces" a fluid by emptying its own barrels.
-  if (r->specialType != FactorioObjectSpecialType::Normal) return 2;
-  return IsAvailable(r) ? 0 : 1;
+  if (!IsAvailable(r)) return 2;
+  if (r->specialType != FactorioObjectSpecialType::Normal) return 1;
+  return 0;
+}
+
+// Position of the object's gating milestone in the milestone order — a proxy
+// for "how early in the game this appears". With includeReached=false,
+// reachable-now objects rank -1 (before everything gated); with true, even
+// reached objects rank by their milestone chain (pure appearance order).
+// No analysis yet ranks everything equal.
+int MilestoneRank(const FactorioObject* o, bool includeReached = false) {
+  if (g_milestones == nullptr) return -1;
+  if (!includeReached && g_milestones->IsAccessibleWithCurrentMilestones(o)) return -1;
+  FactorioObject* gate = g_milestones->GetHighest(o, /*all=*/includeReached);
+  const auto& order = g_milestones->currentMilestones;
+  for (size_t i = 0; i < order.size(); ++i) {
+    if (order[i] == gate) return static_cast<int>(i);
+  }
+  return gate == nullptr ? -1 : static_cast<int>(order.size());
 }
 
 void SortRecipes(std::vector<const RecipeOrTechnology*>& list) {
@@ -337,19 +355,10 @@ EntityCrafter* PickDefaultCrafter(const std::vector<EntityCrafter*>& candidates)
   if (best != nullptr) return best;
   // Nothing reachable yet: pick the building unlocked SOONEST in milestone
   // order (early-game machine), not the endgame one.
-  auto milestoneRank = [&](const EntityCrafter* c) {
-    if (g_milestones == nullptr) return -1;  // no analysis: rank all equal
-    FactorioObject* gate = g_milestones->GetHighest(c, /*all=*/false);
-    const auto& order = g_milestones->currentMilestones;
-    for (size_t i = 0; i < order.size(); ++i) {
-      if (order[i] == gate) return static_cast<int>(i);
-    }
-    return static_cast<int>(order.size());
-  };
   for (EntityCrafter* c : candidates) {
     if (c->factorioType == "character") continue;
-    if (best == nullptr || milestoneRank(c) < milestoneRank(best) ||
-        (milestoneRank(c) == milestoneRank(best) &&
+    if (best == nullptr || MilestoneRank(c) < MilestoneRank(best) ||
+        (MilestoneRank(c) == MilestoneRank(best) &&
          c->baseCraftingSpeed > best->baseCraftingSpeed)) {
       best = c;
     }
@@ -580,8 +589,22 @@ static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
     return extra;
   };
 
+  // Crafters in list order, but anything not reachable yet sinks to the
+  // bottom (milestone-locked by unlock order, inaccessible last).
+  std::vector<EntityCrafter*> crafterList = r->crafters;
+  std::stable_sort(crafterList.begin(), crafterList.end(),
+                   [](const EntityCrafter* a, const EntityCrafter* b) {
+                     auto rank = [](const EntityCrafter* c) {
+                       if (g_milestones == nullptr) return -1;
+                       if (!g_milestones->IsAccessible(c)) {
+                         return std::numeric_limits<int>::max();
+                       }
+                       return MilestoneRank(c);
+                     };
+                     return rank(a) < rank(b);
+                   });
   json crafters = json::array();
-  for (EntityCrafter* c : r->crafters) {
+  for (EntityCrafter* c : crafterList) {
     // width/height: tile footprint (from selection_box) — blueprint
     // auto-generation groundwork; already in every bundle.
     crafters.push_back(brief(c, json{{"speed", c->baseCraftingSpeed},
@@ -608,28 +631,57 @@ static std::string rowOptions(std::string recipeTdn, std::string entityTdn) {
                    ? nullptr
                    : &recipe->allowedModuleCategories);
   };
+  // Palette order (user directive): productivity, speed, quality, efficiency;
+  // anything else by how early it appears in milestone order. Within a class,
+  // tiers ascend by yafc cost (module 1 < module 2 < ...).
+  auto moduleClass = [](const Module* m) {
+    const ModuleSpecification& spec = m->moduleSpecification;
+    if (spec.baseProductivity > 0) return 0;
+    if (spec.baseSpeed > 0) return 1;
+    if (spec.baseQuality > 0) return 2;
+    if (spec.baseConsumption < 0) return 3;
+    return 4;
+  };
+  auto sortModules = [&](std::vector<Module*>& list) {
+    std::stable_sort(list.begin(), list.end(),
+                     [&](const Module* a, const Module* b) {
+                       int classA = moduleClass(a), classB = moduleClass(b);
+                       if (classA != classB) return classA < classB;
+                       if (classA == 4) {
+                         int rankA = MilestoneRank(a, /*includeReached=*/true);
+                         int rankB = MilestoneRank(b, /*includeReached=*/true);
+                         if (rankA != rankB) return rankA < rankB;
+                       }
+                       return CostOf(a) < CostOf(b);
+                     });
+  };
+  auto moduleBrief = [&](Module* m) {
+    const ModuleSpecification& spec = m->moduleSpecification;
+    return brief(m, json{{"speed", spec.baseSpeed},
+                         {"productivity", spec.baseProductivity},
+                         {"consumption", spec.baseConsumption}});
+  };
   json modules = json::array();
   if (entity != nullptr && entity->moduleSlots > 0) {
+    std::vector<Module*> accepted;
     for (Module* m : Db().allModules) {
-      if (!entity->CanAcceptModule(m->moduleSpecification) || !recipeAccepts(m)) continue;
-      const ModuleSpecification& spec = m->moduleSpecification;
-      modules.push_back(brief(m, json{{"speed", spec.baseSpeed},
-                                      {"productivity", spec.baseProductivity},
-                                      {"consumption", spec.baseConsumption}}));
+      if (entity->CanAcceptModule(m->moduleSpecification) && recipeAccepts(m)) {
+        accepted.push_back(m);
+      }
     }
+    sortModules(accepted);
+    for (Module* m : accepted) modules.push_back(moduleBrief(m));
   }
 
   json beacons = json::array();
   for (EntityBeacon* b : Db().allBeacons) {
-    json beaconModules = json::array();
+    std::vector<Module*> accepted;
     for (Module* m : Db().allModules) {
-      if (b->CanAcceptModule(m->moduleSpecification)) {
-        const ModuleSpecification& spec = m->moduleSpecification;
-        beaconModules.push_back(brief(m, json{{"speed", spec.baseSpeed},
-                                              {"productivity", spec.baseProductivity},
-                                              {"consumption", spec.baseConsumption}}));
-      }
+      if (b->CanAcceptModule(m->moduleSpecification)) accepted.push_back(m);
     }
+    sortModules(accepted);
+    json beaconModules = json::array();
+    for (Module* m : accepted) beaconModules.push_back(moduleBrief(m));
     beacons.push_back(brief(b, json{{"moduleSlots", b->moduleSlots},
                                     {"efficiency", b->beaconEfficiency},
                                     {"profile", b->profileValues},
